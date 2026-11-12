@@ -24,10 +24,37 @@ export const CATEGORIES: Category[] = [
 export const FALLBACK_EXPENSE = 'egyeb';
 export const FALLBACK_INCOME = 'bevetel';
 
-const byId = new Map(CATEGORIES.map((c) => [c.id, c]));
+let custom: Category[] = [];
+let byId = new Map(CATEGORIES.map((c) => [c.id, c]));
+
+/** A felhasználó saját kategóriáinak beállítása (a beállítások betöltésekor/módosításakor hívjuk). */
+export function setCustomCategories(list: Category[]): void {
+  custom = list.filter((c) => c.id.startsWith('custom-'));
+  byId = new Map([...CATEGORIES, ...custom].map((c) => [c.id, c]));
+}
+
+/** Beépített + saját kategóriák. A saját kiadási kategóriák az "Egyéb" elé kerülnek. */
+export function allCategories(): Category[] {
+  const i = CATEGORIES.findIndex((c) => c.id === FALLBACK_EXPENSE);
+  return [...CATEGORIES.slice(0, i), ...custom, ...CATEGORIES.slice(i)];
+}
 
 export function getCategory(id: string): Category {
   return byId.get(id) ?? byId.get(FALLBACK_EXPENSE)!;
+}
+
+/** Saját kategóriához választható ikonok és színek. */
+export const CUSTOM_ICONS = ['🛴', '🎁', '🐶', '👶', '🎓', '💇', '🏋️', '🎮', '📚', '🚬', '🍺', '🧾', '🛠️', '🌱', '💼', '❤️'];
+const CUSTOM_COLORS = ['#E4572E', '#17BEBB', '#FFC914', '#76B041', '#8E7DBE', '#F4845F', '#2D7DD2', '#C2185B'];
+
+export function newCustomCategory(name: string, icon: string, existing: Category[]): Category {
+  return {
+    id: `custom-${Date.now().toString(36)}`,
+    name: name.trim(),
+    icon,
+    color: CUSTOM_COLORS[existing.length % CUSTOM_COLORS.length],
+    kind: 'expense',
+  };
 }
 
 /**
@@ -88,10 +115,12 @@ const DEFAULT_KEYWORDS: Record<string, string[]> = {
     'BYBIT', 'BINANCE', 'COINBASE', 'KRAKEN', 'BITSTAMP', 'BITPANDA', 'LIGHTYEAR', 'TRADING 212', 'TRADING212',
     'ETORO', 'INTERACTIVE BROKERS', 'IBKR', 'DEGIRO', 'XTB', 'FREEDOM24', 'SCALABLE CAPITAL', 'ALLAMPAPIR',
     'MAP+', 'PMAP', 'BEFEKTETES', 'ONKENTES NYUGDIJPENZTAR', 'NYUGDIJPENZTAR', 'EGESZSEGPENZTAR',
+    'CELBETET', 'MEGTAKARITASI SZAMLA', 'TO SAVINGS', 'SAVINGS', 'SAVINGS VAULT', 'VAULT', 'POCKET', 'ZSEB',
   ],
   atvezetes: [
     'SAJAT SZAMLA', 'SAJAT SZAMLARA', 'SAJAT SZAMLAROL', 'SAJAT SZAMLAK KOZOTT', 'ATVEZETES',
-    'DEVIZAKONVERZIO', 'KONVERZIO', 'CONVERTED', 'TOPPED UP', 'TOP UP',
+    'DEVIZAKONVERZIO', 'KONVERZIO', 'CONVERTED', 'TOPPED UP', 'TOP UP', 'TOPUP', 'TOP-UP', 'EXCHANGE',
+    'EXCHANGED TO', 'ATVALTAS', 'PENZVALTAS',
     'WISE', 'TRANSFERWISE', 'REVOLUT', 'MEGTAKARITAS', 'BETETLEKOTES', 'LEKOTES',
   ],
 };

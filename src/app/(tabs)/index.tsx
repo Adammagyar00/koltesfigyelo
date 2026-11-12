@@ -10,12 +10,13 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getCategory } from '@/lib/categories';
 import { formatMoney, formatMonth, todayISO } from '@/lib/format';
-import { budgetStatuses, monthlyTrend, monthOf, savingTips, shiftMonth, summarizeMonth } from '@/lib/insights';
+import { budgetStatuses, dailySpending, monthlyTrend, monthOf, savingTips, shiftMonth, summarizeMonth } from '@/lib/insights';
 import { useData } from '@/state/data';
 
 export default function OverviewScreen() {
   const theme = useTheme();
-  const { transactions, budgets, loading, error } = useData();
+  // Az összesítésekhez a forintra számolt tételek kellenek.
+  const { baseTransactions: transactions, budgets, loading, error, settings } = useData();
   const today = todayISO();
   const currentMonth = monthOf(today);
   const latestMonth = transactions[0] ? monthOf(transactions[0].date) : currentMonth;
@@ -38,11 +39,16 @@ export default function OverviewScreen() {
       invested: transactions
         .filter((t) => monthOf(t.date) === month && t.categoryId === 'befektetes' && t.currency === 'HUF')
         .reduce((s, t) => s - t.amount, 0),
+      daily: dailySpending(transactions, month),
       uncategorized: transactions.filter(
         (t) => monthOf(t.date) === month && t.amount < 0 && t.categorySource === 'default',
       ).length,
     };
   }, [transactions, budgets, month, today]);
+
+  // Zárolt, még le nem könyvelt tételek (a legutóbbi kivonatokból) – csak tájékoztatásul, nincsenek az összegekben.
+  const pending = settings.pending.filter((p) => p.amount < 0);
+  const pendingTotal = pending.reduce((s, p) => s - (p.currency === 'HUF' ? p.amount : p.amount * (settings.rates[p.currency] ?? 0)), 0);
 
   if (loading) return <Loading />;
 
@@ -122,6 +128,28 @@ export default function OverviewScreen() {
         ) : null}
       </Card>
 
+      {pending.length > 0 ? (
+        <Card>
+          <ThemedText style={{ fontWeight: '700' }}>
+            ⏳ Várható kiadás: {formatMoney(pendingTotal)} ({pending.length} zárolt tétel)
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            A bank már zárolta, de még nem könyvelte le ezeket, ezért nincsenek benne az összegekben. A következő
+            kivonattal rendes tételként jönnek.
+          </ThemedText>
+          {pending.slice(0, 5).map((p, i) => (
+            <View key={`${p.date}-${i}`} style={styles.row}>
+              <ThemedText type="small" style={{ flex: 1 }} numberOfLines={1}>
+                {p.description}
+              </ThemedText>
+              <ThemedText type="small" style={{ fontWeight: '700' }}>
+                {formatMoney(p.amount, p.currency)}
+              </ThemedText>
+            </View>
+          ))}
+        </Card>
+      ) : null}
+
       {data.uncategorized > 0 ? (
         <Pressable onPress={() => router.push({ pathname: '/transactions', params: { month, category: 'uncategorized' } })}>
           <Card style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
@@ -191,6 +219,11 @@ export default function OverviewScreen() {
         )}
       </Card>
 
+      <SectionTitle>Napi kiadás</SectionTitle>
+      <Card>
+        <DailyChart days={data.daily} />
+      </Card>
+
       <SectionTitle>Utolsó 6 hónap</SectionTitle>
       <Card>
         <View style={styles.chart}>
@@ -247,7 +280,48 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
   );
 }
 
+function DailyChart({ days }: { days: number[] }) {
+  const theme = useTheme();
+  const max = Math.max(1, ...days);
+  const total = days.reduce((s, d) => s + d, 0);
+  const active = days.filter((d) => d > 0).length;
+  const peak = days.indexOf(Math.max(...days));
+  return (
+    <View style={{ gap: Spacing.two }}>
+      <View style={styles.dailyChart}>
+        {days.map((d, i) => (
+          <View key={i} style={styles.dailyCol}>
+            <View
+              style={{
+                height: Math.max(d > 0 ? 3 : 1, (d / max) * 90),
+                backgroundColor: d > 0 ? (i === peak ? theme.warning : theme.tint) : theme.backgroundSelected,
+                borderRadius: 2,
+              }}
+            />
+          </View>
+        ))}
+      </View>
+      <View style={styles.row}>
+        <ThemedText type="small" themeColor="textSecondary" style={{ flex: 1 }}>
+          1.
+        </ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          {days.length}.
+        </ThemedText>
+      </View>
+      {total > 0 ? (
+        <ThemedText type="small" themeColor="textSecondary">
+          {active} napon költöttél, átlagosan napi {formatMoney(total / days.length)}. A legtöbb a hónap {peak + 1}.
+          napján: {formatMoney(days[peak])}.
+        </ThemedText>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  dailyChart: { flexDirection: 'row', alignItems: 'flex-end', height: 96, gap: 2 },
+  dailyCol: { flex: 1, justifyContent: 'flex-end' },
   big: { fontSize: 36, lineHeight: 42, fontWeight: '800', fontVariant: ['tabular-nums'] },
   row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   catRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.one },

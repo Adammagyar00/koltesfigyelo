@@ -1,4 +1,4 @@
-export type BankId = 'erste' | 'mbh' | 'wise' | 'other';
+export type BankId = 'erste' | 'mbh' | 'wise' | 'revolut' | 'other';
 
 export type CategoryKind = 'expense' | 'income' | 'transfer';
 

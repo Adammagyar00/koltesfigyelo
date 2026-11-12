@@ -1,6 +1,6 @@
 import { getCategory } from './categories';
 import { formatMoney } from './format';
-import { merchantKey } from './text';
+import { merchantKey, normalize } from './text';
 import type { Budget, Transaction } from './types';
 
 /** 'YYYY-MM' */
@@ -78,6 +78,41 @@ export function summarizeMonth(
 export function monthlyTrend(txs: Transaction[], lastMonth: MonthKey, months = 6, currency = 'HUF'): MonthSummary[] {
   const out: MonthSummary[] = [];
   for (let i = months - 1; i >= 0; i--) out.push(summarizeMonth(txs, shiftMonth(lastMonth, -i), currency));
+  return out;
+}
+
+/** Napi kiadás a hónapban (index 0 = 1. nap), a kiadási kategóriák alapján; a visszatérítés csökkenti. */
+export function dailySpending(txs: Transaction[], month: MonthKey, currency = 'HUF'): number[] {
+  const days = new Array<number>(daysInMonth(month)).fill(0);
+  for (const t of txs) {
+    if (t.currency !== currency || monthOf(t.date) !== month) continue;
+    if (getCategory(t.categoryId).kind !== 'expense') continue;
+    days[Number(t.date.slice(8, 10)) - 1] -= t.amount;
+  }
+  return days.map((d) => Math.max(0, Math.round(d)));
+}
+
+export interface InvestmentMonth {
+  month: MonthKey;
+  /** Nettó befektetés/megtakarítás (kiutalások mínusz visszavételek), pozitív = félretett. */
+  invested: number;
+  income: number;
+  /** A bevétel hányad részét tetted félre (null, ha nincs bevétel). */
+  rate: number | null;
+}
+
+/** Havi nettó befektetés a "Befektetés, megtakarítás" kategória alapján. */
+export function investmentTrend(txs: Transaction[], lastMonth: MonthKey, months = 6, currency = 'HUF'): InvestmentMonth[] {
+  const out: InvestmentMonth[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const month = shiftMonth(lastMonth, -i);
+    let invested = 0;
+    for (const t of txs) {
+      if (t.categoryId === 'befektetes' && t.currency === currency && monthOf(t.date) === month) invested -= t.amount;
+    }
+    const income = summarizeMonth(txs, month, currency).income;
+    out.push({ month, invested: Math.round(invested), income, rate: income > 0 ? invested / income : null });
+  }
   return out;
 }
 
@@ -196,6 +231,11 @@ export interface SavingTip {
  * Változó, csökkenthető kategóriák. Csak ezeknél van értelme a hó közbeni tempóból vetíteni;
  * a havonta egyszer esedékes tételeket (előfizetés, rezsi, lakbér) nem vetítjük fel.
  */
+/** Budapesti havibérlet ára (Ft) – ha változik, itt kell átírni. */
+export const BKK_MONTHLY_PASS = 8950;
+/** Roller-, bicikli- és taxiszolgáltatások. */
+const MICROMOBILITY = /\b(LIME|TIER|DOTT|BOLT|BUBI|UBER|TAXI|FOTAXI|FREENOW|FREE NOW)\b/;
+
 const VARIABLE = new Set(['etterem', 'vasarlas', 'szorakozas', 'egyeb', 'haztartas']);
 
 /**
@@ -274,6 +314,33 @@ export function savingTips(
       title: `${subs.length} rendszeres előfizetés: havi ${fmt(monthly)}`,
       body: `${names}${subs.length > 4 ? ', …' : ''}. Ez évente ${fmt(monthly * 12)}. Nézd át, melyiket használod ténylegesen.`,
       monthlySaving: subs[0].averageAmount,
+    });
+  }
+
+  // 3/b) Roller és taxi a BKK-bérlethez képest.
+  const micro = txs.filter(
+    (t) =>
+      t.currency === currency &&
+      t.amount < 0 &&
+      monthOf(t.date) === month &&
+      t.categoryId === 'kozlekedes' &&
+      MICROMOBILITY.test(normalize(`${t.counterparty} ${t.description}`)),
+  );
+  const hasPass = txs.some(
+    (t) => monthOf(t.date) === month && t.amount < 0 && /\bBKK\b|BERLET/.test(normalize(`${t.counterparty} ${t.description}`)),
+  );
+  const microTotal = micro.reduce((s, t) => s - t.amount, 0);
+  const microProjected = scale(microTotal);
+  if (!hasPass && micro.length >= 4 && microProjected > BKK_MONTHLY_PASS) {
+    tips.push({
+      id: 'transport:pass',
+      icon: '🛴',
+      title: `Roller és taxi: ${micro.length} út, ${fmt(microTotal)} ebben a hónapban`,
+      body:
+        `${isCurrent ? `Ezzel a tempóval a hónap végére kb. ${fmt(microProjected)} lesz. ` : ''}` +
+        `Egy BKK-havibérlet kb. ${fmt(BKK_MONTHLY_PASS)}: ha az utak nagy részét tömegközlekedéssel tennéd meg, ` +
+        `havonta kb. ${fmt(microProjected - BKK_MONTHLY_PASS)} maradna nálad.`,
+      monthlySaving: Math.round(microProjected - BKK_MONTHLY_PASS),
     });
   }
 

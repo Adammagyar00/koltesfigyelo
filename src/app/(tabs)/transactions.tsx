@@ -8,7 +8,7 @@ import { TransactionRow } from '@/components/transaction-row';
 import { Button, Chip, Empty, Field, Loading, Title } from '@/components/ui';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { CATEGORIES, getCategory } from '@/lib/categories';
+import { allCategories, getCategory } from '@/lib/categories';
 import { formatMoney, formatMonth } from '@/lib/format';
 import { monthOf } from '@/lib/insights';
 import { normalize } from '@/lib/text';
@@ -87,7 +87,7 @@ export default function TransactionsScreen() {
               <Chip label="Besorolatlan" onPress={() => setFilter({ category: UNCATEGORIZED })} />
             ) : null}
             {!category
-              ? CATEGORIES.map((c) => (
+              ? allCategories().map((c) => (
                   <Chip key={c.id} label={`${c.icon} ${c.name}`} onPress={() => setFilter({ category: c.id })} />
                 ))
               : null}

@@ -6,19 +6,22 @@ import { ThemedText } from '@/components/themed-text';
 import { Button, Card, CategoryBadge, Empty, Loading, Screen, SectionTitle, Title } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { formatDate, formatMoney, todayISO } from '@/lib/format';
-import { detectRecurring, monthOf, savingTips } from '@/lib/insights';
+import { formatDate, formatMoney, formatMonth, todayISO } from '@/lib/format';
+import type { InvestmentMonth } from '@/lib/insights';
+import { detectRecurring, investmentTrend, monthOf, savingTips } from '@/lib/insights';
 import { useData } from '@/state/data';
 
 export default function InsightsScreen() {
   const theme = useTheme();
-  const { transactions, budgets, loading } = useData();
+  // Az összesítésekhez a forintra számolt tételek kellenek.
+  const { baseTransactions: transactions, budgets, loading } = useData();
   const today = todayISO();
   const month = transactions[0] && monthOf(transactions[0].date) < monthOf(today) ? monthOf(transactions[0].date) : monthOf(today);
 
-  const { tips, recurring } = useMemo(
+  const { tips, recurring, investments } = useMemo(
     () => ({
       tips: savingTips(transactions, month, today, budgets),
+      investments: investmentTrend(transactions, month, 6),
       recurring: detectRecurring(transactions, today),
     }),
     [transactions, budgets, month, today],
@@ -80,6 +83,8 @@ export default function InsightsScreen() {
             ))
           )}
 
+          <InvestmentSection months={investments} />
+
           <SectionTitle>Rendszeres terhelések</SectionTitle>
           {recurring.length === 0 ? (
             <Card>
@@ -125,5 +130,53 @@ export default function InsightsScreen() {
         </>
       )}
     </Screen>
+  );
+}
+
+function InvestmentSection({ months }: { months: InvestmentMonth[] }) {
+  const theme = useTheme();
+  const current = months[months.length - 1];
+  const withData = months.filter((m) => m.invested !== 0);
+  if (withData.length === 0) return null;
+  const max = Math.max(1, ...months.map((m) => Math.abs(m.invested)));
+  const avg = withData.reduce((s, m) => s + m.invested, 0) / withData.length;
+  return (
+    <>
+      <SectionTitle>Befektetés, megtakarítás</SectionTitle>
+      <Card>
+        <ThemedText type="small" themeColor="textSecondary">
+          {formatMonth(current.month)}: nettó félretett összeg
+        </ThemedText>
+        <ThemedText style={{ fontSize: 28, lineHeight: 34, fontWeight: '800', color: current.invested >= 0 ? theme.tint : theme.danger }}>
+          {formatMoney(current.invested)}
+        </ThemedText>
+        {current.rate !== null ? (
+          <ThemedText type="small" themeColor="textSecondary">
+            A bevételed {Math.round(current.rate * 100)}%-a. A pénzügyi tanácsadók gyakran 10–20%-ot javasolnak.
+          </ThemedText>
+        ) : null}
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 90, gap: Spacing.two, marginTop: Spacing.two }}>
+          {months.map((m) => (
+            <View key={m.month} style={{ flex: 1, alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+              <View
+                style={{
+                  width: '60%',
+                  height: Math.max(2, (Math.abs(m.invested) / max) * 60),
+                  backgroundColor: m.invested >= 0 ? theme.tint : theme.danger,
+                  borderRadius: 4,
+                }}
+              />
+              <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 11 }}>
+                {formatMonth(m.month).split(' ')[1].slice(0, 3)}
+              </ThemedText>
+            </View>
+          ))}
+        </View>
+        <ThemedText type="small" themeColor="textSecondary">
+          Átlagosan havi {formatMoney(avg)}. Ide számít a befektetési platform (pl. Bybit, Lightyear) és a megtakarítási
+          számla (pl. CélBetét); az onnan visszavett pénz levonódik.
+        </ThemedText>
+      </Card>
+    </>
   );
 }

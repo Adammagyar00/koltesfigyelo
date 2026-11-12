@@ -5,7 +5,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Button, Card, CategoryBadge, Field, Loading, ProgressBar, Screen, SectionTitle, Title } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { CATEGORIES } from '@/lib/categories';
+import { allCategories } from '@/lib/categories';
 import { parseAmount } from '@/lib/csv/values';
 import { formatMoney, formatMonth, todayISO } from '@/lib/format';
 import { budgetStatuses, monthlyTrend, monthOf, shiftMonth, summarizeMonth } from '@/lib/insights';
@@ -13,7 +13,9 @@ import { useData } from '@/state/data';
 
 export default function BudgetsScreen() {
   const theme = useTheme();
-  const { transactions, budgets, setBudget, loading } = useData();
+  // Az összesítésekhez a forintra számolt tételek kellenek.
+  const { baseTransactions: transactions, budgets, setBudget, loading, settings } = useData();
+  const categories = useMemo(() => allCategories(), [settings.customCategories]); // eslint-disable-line react-hooks/exhaustive-deps
   const today = todayISO();
   const month = monthOf(today);
   const [editing, setEditing] = useState<string | null>(null);
@@ -25,13 +27,13 @@ export default function BudgetsScreen() {
     // Az előző 3 lezárt hónap átlaga – ebből javasolunk keretet.
     const past = monthlyTrend(transactions, shiftMonth(month, -1), 3).filter((s) => s.spent > 0);
     const avg = new Map<string, number>();
-    for (const c of CATEGORIES) {
+    for (const c of categories) {
       if (past.length === 0) break;
       const total = past.reduce((s, p) => s + (p.byCategory.find((x) => x.categoryId === c.id)?.total ?? 0), 0);
       if (total > 0) avg.set(c.id, total / past.length);
     }
     const all = budgetStatuses(
-      CATEGORIES.filter((c) => c.kind === 'expense').map((c) => ({
+      categories.filter((c) => c.kind === 'expense').map((c) => ({
         categoryId: c.id,
         monthlyLimit: budgets.find((b) => b.categoryId === c.id)?.monthlyLimit ?? 0,
       })),
@@ -39,7 +41,7 @@ export default function BudgetsScreen() {
       today,
     );
     return { statuses: new Map(all.map((s) => [s.categoryId, s])), averages: avg };
-  }, [transactions, budgets, month, today]);
+  }, [transactions, budgets, month, today, categories]);
 
   if (loading) return <Loading />;
 
@@ -83,7 +85,7 @@ export default function BudgetsScreen() {
       ) : null}
 
       <SectionTitle>Kategóriák</SectionTitle>
-      {CATEGORIES.filter((c) => c.kind === 'expense').map((c) => {
+      {categories.filter((c) => c.kind === 'expense').map((c) => {
         const st = statuses.get(c.id);
         const limit = budgets.find((b) => b.categoryId === c.id)?.monthlyLimit;
         const avg = averages.get(c.id);

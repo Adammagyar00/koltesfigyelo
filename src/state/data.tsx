@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { defaultRules } from '@/lib/categories';
+import { defaultRules, FALLBACK_EXPENSE, newCustomCategory, setCustomCategories } from '@/lib/categories';
 import { categorize, recategorize, sortRules } from '@/lib/categorize';
+import { toBaseCurrency } from '@/lib/currency';
 import { cleanProfile, EMPTY_PROFILE, type OwnProfile } from '@/lib/own-transfers';
+import { DEFAULT_SETTINGS, type AppSettings, type PendingItem } from '@/lib/settings';
 import { isGenericPattern, normalize } from '@/lib/text';
-import type { Budget, ParsedTransaction, Rule, Transaction } from '@/lib/types';
+import type { BankId, Budget, Category, ParsedTransaction, Rule, Transaction } from '@/lib/types';
 import * as store from '@/services/data';
 
 interface ImportOutcome {
@@ -15,8 +17,10 @@ interface ImportOutcome {
 interface DataState {
   loading: boolean;
   error: string | null;
-  /** Dátum szerint csökkenő sorrendben. */
+  /** Dátum szerint csökkenő sorrendben, eredeti pénznemben (listákhoz). */
   transactions: Transaction[];
+  /** Ugyanezek forintra számolva (összesítésekhez, grafikonokhoz, tippekhez). */
+  baseTransactions: Transaction[];
   userRules: Rule[];
   budgets: Budget[];
   /** Felhasználói + alapértelmezett szabályok, alkalmazási sorrendben. */
@@ -26,8 +30,13 @@ interface DataState {
   /**
    * Importálás. Ha `replaceIds` meg van adva, ezeket a (korábban importált) tételeket előbb törli –
    * így egy kivonat újraimportálása lecseréli ugyanannak az időszaknak a régi tételeit.
+   * A `pending` a kivonat zárolt (még le nem könyvelt) tételei: lecserélik az adott bank korábbiakat.
    */
-  importTransactions(parsed: ParsedTransaction[], replaceIds?: string[]): Promise<ImportOutcome>;
+  importTransactions(
+    parsed: ParsedTransaction[],
+    replaceIds?: string[],
+    pending?: { bank: BankId; items: Omit<PendingItem, 'bank'>[] },
+  ): Promise<ImportOutcome>;
   /** Ugyanannál a banknál, ugyanebben az időszakban lévő, de az új importban nem szereplő tételek. */
   overlapping(parsed: ParsedTransaction[]): Transaction[];
   /**
@@ -44,6 +53,15 @@ interface DataState {
   profile: OwnProfile;
   /** Elmenti a profilt, és újrasorol mindent. Visszaadja, hány tétel került át "Átvezetés"-be. */
   setProfile(profile: OwnProfile): Promise<number>;
+  settings: AppSettings;
+  updateSettings(patch: Partial<AppSettings>): Promise<void>;
+  addCategory(name: string, icon: string): Promise<Category>;
+  /** Saját kategória törlése: a tételei újra besorolódnak, a rá mutató szabályok és keret törlődik. */
+  removeCategory(id: string): Promise<void>;
+  /** A teljes adatbázis JSON-mentése. */
+  exportBackup(): Promise<string>;
+  /** Mentés visszatöltése (minden jelenlegi adat cseréje). Visszaadja a visszatöltött tételek számát. */
+  restoreBackup(json: string): Promise<number>;
 }
 
 const DataContext = createContext<DataState | null>(null);
@@ -56,6 +74,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [profile, setProfileState] = useState<OwnProfile>(EMPTY_PROFILE);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [settings, setSettingsState] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  const applySettings = useCallback((s: AppSettings) => {
+    // A kategória-nyilvántartást a state előtt frissítjük, hogy a következő renderben már az új lista látsszon.
+    setCustomCategories(s.customCategories);
+    setSettingsState(s);
+  }, []);
 
   useEffect(() => {
     const onError = (e: Error) => setError(e.message);
@@ -80,14 +106,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
       .then((p) => alive && setProfileState(p))
       .catch(onError)
       .finally(() => alive && setProfileLoaded(true));
+    store
+      .loadSettings()
+      .then((s) => alive && applySettings(s))
+      .catch(onError)
+      .finally(() => alive && setSettingsLoaded(true));
     return () => {
       alive = false;
       unsubs.forEach((u) => u());
     };
-  }, []);
+  }, [applySettings]);
 
   const rules = useMemo(() => sortRules([...userRules, ...defaultRules()]), [userRules]);
-  const ready = loaded.tx && loaded.rules && loaded.budgets && profileLoaded;
+  const ready = loaded.tx && loaded.rules && loaded.budgets && profileLoaded && settingsLoaded;
+  const baseTransactions = useMemo(() => toBaseCurrency(transactions, settings.rates), [transactions, settings.rates]);
 
   // Induláskor egyszer újrasorolunk mindent: így egy frissítés javított/új szabályai (és a túl általános
   // saját szabályok kikapcsolása) a korábban importált tételekre is érvényesek lesznek.
@@ -112,10 +144,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [rules, existingIds, profile],
   );
 
+  const saveSettings = async (next: AppSettings) => {
+    await store.saveSettings(next);
+    applySettings(next);
+  };
+
   const value: DataState = {
     loading: !ready,
     error,
     transactions,
+    baseTransactions,
     userRules,
     budgets,
     rules,
@@ -131,7 +169,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return transactions.filter((t) => banks.has(t.bank) && t.date >= from && t.date <= to && !ids.has(t.id));
     },
 
-    async importTransactions(parsed, replaceIds) {
+    async importTransactions(parsed, replaceIds, pending) {
       const replaced = new Set(replaceIds ?? []);
       if (replaced.size) await store.deleteTransactions([...replaced]);
       const rows = preview(parsed);
@@ -140,6 +178,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       await store.saveTransactions(fresh);
       // Az új tételekkel együtt keressük a bankok közötti átutalás-párokat (pl. Erste → Wise).
       await store.updateCategories(recategorize([...transactions.filter((t) => !replaced.has(t.id)), ...fresh], rules, profile));
+      if (pending) {
+        await saveSettings({
+          ...settings,
+          pending: [
+            ...settings.pending.filter((p) => p.bank !== pending.bank),
+            ...pending.items.map((i) => ({ ...i, bank: pending.bank })),
+          ],
+        });
+      }
       return { added: fresh.length, duplicates: rows.length - fresh.length };
     },
 
@@ -183,6 +230,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     async clearAll() {
       await store.clearAll();
       setProfileState(EMPTY_PROFILE);
+      applySettings(DEFAULT_SETTINGS);
     },
 
     profile,
@@ -194,6 +242,51 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const changed = recategorize(transactions, rules, p);
       await store.updateCategories(changed);
       return changed.filter((t) => t.categoryId === 'atvezetes').length;
+    },
+
+    settings,
+
+    async updateSettings(patch) {
+      await saveSettings({ ...settings, ...patch });
+    },
+
+    async addCategory(name, icon) {
+      const cat = newCustomCategory(name, icon, settings.customCategories);
+      await saveSettings({ ...settings, customCategories: [...settings.customCategories, cat] });
+      return cat;
+    },
+
+    async removeCategory(id) {
+      await saveSettings({ ...settings, customCategories: settings.customCategories.filter((c) => c.id !== id) });
+      const remainingRules = userRules.filter((r) => r.categoryId !== id);
+      for (const r of userRules) if (r.categoryId === id) await store.deleteRule(r.id);
+      if (budgets.some((b) => b.categoryId === id)) await store.deleteBudget(id);
+      // A kategória tételei (a kézzel besoroltak is) újra automatikus besorolást kapnak.
+      const orphans = transactions
+        .filter((t) => t.categoryId === id)
+        .map((t) => ({ ...t, categoryId: FALLBACK_EXPENSE, categorySource: 'default' as const, ruleId: undefined }));
+      const others = transactions.filter((t) => t.categoryId !== id);
+      const changed = recategorize([...others, ...orphans], [...remainingRules, ...defaultRules()], profile);
+      const changedIds = new Set(changed.map((c) => c.id));
+      await store.updateCategories([...changed, ...orphans.filter((o) => !changedIds.has(o.id))]);
+    },
+
+    async exportBackup() {
+      return JSON.stringify(await store.exportAll());
+    },
+
+    async restoreBackup(json) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(json);
+      } catch {
+        throw new Error('A fájl nem olvasható (nem JSON).');
+      }
+      const data = store.validateBackup(parsed);
+      await store.restoreAll(data);
+      setProfileState(data.profile);
+      applySettings(data.settings);
+      return data.transactions.length;
     },
   };
 

@@ -23,11 +23,14 @@ export type Role =
   | 'description'
   | 'id'
   | 'status'
-  | 'direction';
+  | 'direction'
+  | 'fee'
+  | 'product';
 
 /** Szerepenként a fejlécszinonimák, prioritási sorrendben (normalizált formában). */
 const SYNONYMS: Record<Role, string[]> = {
   date: [
+    'COMPLETED DATE', 'TELJESITES DATUMA', 'BEFEJEZES DATUMA', 'STARTED DATE', 'KEZDES DATUMA',
     'TRANZAKCIO DATUMA', 'TRANZAKCIO IDOPONTJA', 'TRANZAKCIO DATUM', 'VASARLAS DATUMA',
     'KONYVELES DATUMA', 'KONYVELESI DATUM', 'KONYVELES NAPJA', 'TERHELES DATUMA', 'DATUM',
     'DATE', 'CREATED ON', 'ERTEKNAP', 'ERTEKNAPJA', 'FINISHED ON',
@@ -46,10 +49,14 @@ const SYNONYMS: Record<Role, string[]> = {
   description: [
     'KOZLEMENY', 'TRANZAKCIO KOZLEMENYE', 'MEGJEGYZES', 'LEIRAS', 'TRANZAKCIO LEIRASA',
     'TRANZAKCIO TIPUSA', 'TRANZAKCIO MEGNEVEZESE', 'MEGNEVEZES', 'TIPUS',
-    'DESCRIPTION', 'PAYMENT REFERENCE', 'REFERENCE', 'NOTE',
+    'DESCRIPTION', 'PAYMENT REFERENCE', 'REFERENCE', 'NOTE', 'TYPE',
   ],
   id: ['TRANZAKCIO AZONOSITO', 'TRANZAKCIO AZONOSITOJA', 'AZONOSITO', 'TRANSFERWISE ID', 'ID'],
-  status: ['STATUS', 'STATUSZ', 'ALLAPOT'],
+  status: ['STATUS', 'STATUSZ', 'ALLAPOT', 'STATE'],
+  // Külön felszámított díj (Revolut): a tétel összegén felül terheli a számlát.
+  fee: ['FEE', 'DIJ'],
+  // Revolut: melyik "termék" (folyószámla vagy megtakarítási zseb) sora.
+  product: ['PRODUCT', 'TERMEK'],
   direction: ['DIRECTION', 'IRANY', 'T/J', 'JELLEG', 'TERHELES/JOVAIRAS'],
 };
 
@@ -67,6 +74,8 @@ export interface ColumnMapping {
   id?: number;
   status?: number;
   direction?: number;
+  fee?: number;
+  product?: number;
 }
 
 export interface ParseOptions {
@@ -117,7 +126,9 @@ export function detectMapping(headers: string[]): ColumnMapping | null {
   const best: Partial<Record<Role, { col: number; prio: number }[]>> = {};
   const used = new Set<number>();
   // A szerepeket sorrendben osztjuk ki, hogy egy oszlop csak egy szerepet kapjon.
-  const order: Role[] = ['date', 'amount', 'debit', 'credit', 'currency', 'id', 'status', 'direction', 'counterparty', 'description'];
+  const order: Role[] = [
+    'date', 'amount', 'debit', 'credit', 'currency', 'id', 'status', 'direction', 'fee', 'product', 'counterparty', 'description',
+  ];
   for (const role of order) {
     const hits: { col: number; prio: number }[] = [];
     headers.forEach((h, col) => {
@@ -147,6 +158,8 @@ export function detectMapping(headers: string[]): ColumnMapping | null {
     id: one('id'),
     status: one('status'),
     direction: one('direction'),
+    fee: one('fee'),
+    product: one('product'),
   };
 }
 
@@ -154,7 +167,10 @@ const SKIP_STATUSES = [
   'CANCELLED', 'DECLINED', 'FAILED', 'REFUNDED', 'PENDING',
   'ELUTASITVA', 'ELUTASITOTT', 'VISSZAUTASITVA', 'TOROLT', 'TOROLVE', 'SIKERTELEN',
   'FUGGO', 'FUGGOBEN', 'FOLYAMATBAN', 'ZAROLT', 'ZAROLAS', 'ELOJEGYZETT',
+  'REVERTED', 'VISSZAVONVA', 'VISSZAALLITVA', 'VISSZAFORDITVA',
 ];
+/** Revolut: csak a folyószámla sorait vesszük; a megtakarítási zseb saját sorai átvezetések. */
+const CURRENT_PRODUCTS = ['', 'CURRENT', 'FOLYOSZAMLA', 'AKTUALIS', 'JELENLEGI'];
 const OUT_DIRECTIONS = ['OUT', 'T', 'TERHELES', 'DEBIT', 'D', '-', 'KIMENO'];
 const IN_DIRECTIONS = ['IN', 'J', 'JOVAIRAS', 'CREDIT', 'C', '+', 'BEJOVO'];
 
@@ -183,7 +199,9 @@ function findHeader(rows: string[][]): { index: number; mapping: ColumnMapping }
 }
 
 function detectBankFromHeaders(headers: string[]): BankId | undefined {
-  if (headers.map(normalize).includes('TRANSFERWISE ID') || isWiseHistoryHeader(headers)) return 'wise';
+  const n = headers.map(normalize);
+  if (n.includes('TRANSFERWISE ID') || isWiseHistoryHeader(headers)) return 'wise';
+  if ((n.includes('PRODUCT') || n.includes('TERMEK')) && (n.includes('STARTED DATE') || n.includes('KEZDES DATUMA'))) return 'revolut';
   return undefined;
 }
 
@@ -318,6 +336,13 @@ export function parseStatement(text: string, opts: ParseOptions): ParseResult {
 
   dataRows.forEach((r, k) => {
     const rowNo = headerIdx + k + 2; // 1-alapú sorszám a fájlban
+    // Az állapotot a dátum előtt nézzük: a függő tételnek gyakran nincs még teljesítési dátuma.
+    const status = normalize(get(r, mapping.status));
+    if (status && SKIP_STATUSES.some((s) => status === s || status.startsWith(`${s} `))) {
+      skipped.push({ row: rowNo, reason: `Státusz: ${get(r, mapping.status)}` });
+      return;
+    }
+
     const date = parseDate(get(r, mapping.date));
     if (!date) {
       // Összesítő/lábléc sorok ("Záró egyenleg", "Összesen") – csendben kihagyjuk, ha nincs bennük összeg.
@@ -325,9 +350,9 @@ export function parseStatement(text: string, opts: ParseOptions): ParseResult {
       return;
     }
 
-    const status = normalize(get(r, mapping.status));
-    if (status && SKIP_STATUSES.some((s) => status === s || status.startsWith(`${s} `))) {
-      skipped.push({ row: rowNo, reason: `Státusz: ${get(r, mapping.status)}` });
+    const product = normalize(get(r, mapping.product));
+    if (mapping.product !== undefined && !CURRENT_PRODUCTS.includes(product)) {
+      skipped.push({ row: rowNo, reason: `Megtakarítási zseb saját sora (${get(r, mapping.product)})` });
       return;
     }
 
@@ -347,6 +372,9 @@ export function parseStatement(text: string, opts: ParseOptions): ParseResult {
     const dir = normalize(get(r, mapping.direction));
     if (dir && OUT_DIRECTIONS.includes(dir)) amount = -Math.abs(amount);
     else if (dir && IN_DIRECTIONS.includes(dir)) amount = Math.abs(amount);
+    // Külön díj (Revolut): a terhelés teljes összege a tétel + a díj.
+    const fee = parseAmount(get(r, mapping.fee), decimal);
+    if (fee) amount -= Math.abs(fee);
     if (amount === 0) {
       skipped.push({ row: rowNo, reason: 'Nulla összeg' });
       return;

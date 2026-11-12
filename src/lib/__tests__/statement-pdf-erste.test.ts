@@ -75,6 +75,11 @@ const page2 = [
   'Zárolások és Végrehajtott, de még le nem könyvelt tranzakciók ',
   `Dátum${T}Zárolás típusa${T}Részletező információk${T}Zárolt összeg`,
   `2026.10.29.${T}ZÁROLVA - KÁRTYA FORGALOM${T}111111xxxxxx9999 Purchase 2026.10.29 15:13:04${T}398`,
+  'Terminal:R9DMGSWC +3619989126   LIME*RIDE S7WU Eredeti .ssz/Orig',
+  'amt: 398.00HUF',
+  `2026.10.29.${T}ZÁROLVA - KÁRTYA FORGALOM${T}111111xxxxxx9999 Purchase 2026.10.29 15:44:10${T}1.899`,
+  'Terminal:S0019153 BUDAPEST   SPAR MAGYARORSZAG KFT. Eredeti',
+  '.ssz/Orig amt: 1899.00HUF',
 ].join('\n');
 
 describe('parsePdfStatement – Erste layout', () => {
@@ -107,7 +112,7 @@ describe('parsePdfStatement – Erste layout', () => {
     const profile = { names: ['Teszt Elek'], accounts: [] };
     const cat = (amount: number) => categorize(r.transactions.find((t) => t.amount === amount)!, rules, profile).categoryId;
     expect(cat(25000)).toBe('atvezetes'); // devizakonverzió saját számláról
-    expect(cat(-6000)).toBe('atvezetes'); // saját számlára (CélBetét)
+    expect(cat(-6000)).toBe('befektetes'); // saját számlára, de megtakarítási számla (CélBetét)
     expect(cat(200)).toBe('atvezetes'); // saját név fordított sorrendben (Revolutról)
     expect(cat(-2500)).toBe('elelmiszer');
     expect(cat(-10000)).toBe('keszpenz');
@@ -115,5 +120,36 @@ describe('parsePdfStatement – Erste layout', () => {
     expect(cat(876)).toBe('vasarlas'); // kártyás visszatérítés: a kategória költését csökkenti
     expect(cat(84000)).toBe('bevetel'); // a "tényleges kedvezményezett" saját név nem átvezetés
     expect(cat(-75450)).toBe('befektetes');
+  });
+});
+
+describe('parsePdfStatement – currency and pending holds', () => {
+  it('detects the statement currency and returns pending holds separately', () => {
+    const r = parsePdfStatement([page1, page2], 'erste');
+    expect(r.currency).toBe('HUF');
+    expect(r.pending).toEqual([
+      { date: '2026-10-29', amount: -398, currency: 'HUF', description: 'LIME*RIDE S7WU' },
+      { date: '2026-10-29', amount: -1899, currency: 'HUF', description: 'BUDAPEST SPAR MAGYARORSZAG KFT.' },
+    ]);
+  });
+
+  it('reads a EUR account statement in EUR', () => {
+    const eur = [
+      `Bankszámlaszám${T}11600006-00000002-22222222${T}Devizanem ${T}EUR`,
+      `Könyvelés ${T}Értéknap${T}Tranzakció megnevezése${T}Összeg(+/-)${T}Egyenleg`,
+      'Nyitó egyenleg ',
+      `2026.10.01.${T}100,00`,
+      `2026.10.02.${T}2026.10.02.${T}KÁRTYA HASZNÁLAT${T}-12,50${T}87,50${T}(0,00)`,
+      `Elfogadó${T}Google Pay SPOTIFY`,
+      `2026.10.03.${T}2026.10.03.${T}ONLINE AZONNALI DEVIZAKONVERZIÓ,${T}-67,91${T}19,59${T}(0,00)`,
+      `2026.10.04.${T}2026.10.04.${T}JÓVÁÍRÁS${T}20,41${T}40,00${T}( - )`,
+    ].join('\n');
+    const r = parsePdfStatement([eur], 'erste');
+    expect(r.currency).toBe('EUR');
+    expect(r.transactions.map((t) => [t.amount, t.currency])).toEqual([
+      [-12.5, 'EUR'],
+      [-67.91, 'EUR'],
+      [20.41, 'EUR'],
+    ]);
   });
 });

@@ -1,9 +1,10 @@
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, router, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
+import { onReminderTapped } from '@/services/reminder';
 import { DataProvider } from '@/state/data';
 
 SplashScreen.preventAutoHideAsync();
@@ -15,6 +16,9 @@ export default function RootLayout() {
   useEffect(() => {
     SplashScreen.hideAsync();
   }, []);
+
+  // A havi emlékeztetőre koppintva az Import fül nyílik meg.
+  useEffect(() => onReminderTapped(() => router.navigate('/import')), []);
 
   return (
     <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>

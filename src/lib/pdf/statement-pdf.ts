@@ -16,8 +16,20 @@ import type { BankId, ParsedTransaction } from '../types';
  * nincs előjel, az előjelet is ebből határozzuk meg.
  */
 
+export interface PdfPendingItem {
+  date: string;
+  /** Negatív = várható kiadás. */
+  amount: number;
+  currency: string;
+  description: string;
+}
+
 export interface PdfParseResult {
   transactions: ParsedTransaction[];
+  /** Zárolt, még le nem könyvelt tételek (pl. Erste "Zárolások" rész). */
+  pending: PdfPendingItem[];
+  /** A kivonat pénzneme (a fejléc "Devizanem" mezőjéből), ha felismertük. */
+  currency: string;
   skipped: { row: number; reason: string }[];
   /** Ha az előjelet nem tudtuk biztosan megállapítani, itt jelezzük. */
   warnings: string[];
@@ -281,7 +293,54 @@ function balanceFit(blocks: Block[]): { ratio: number; order: 'forward' | 'backw
   return fwd >= bwd ? { ratio: fwd / n, order: 'forward' } : { ratio: bwd / n, order: 'backward' };
 }
 
-export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency = 'HUF'): PdfParseResult {
+/** A kivonat pénzneme a fejlécből ("Devizanem\tEUR"); a tételrészletek "Devizanem, összeg:" sorait kihagyja. */
+export function detectStatementCurrency(pages: string[]): string | null {
+  for (const raw of (pages[0] ?? '').split(/\r?\n/).slice(0, 60)) {
+    const m = normalize(raw.replace(/\t/g, ' ')).match(/\bDEVIZANEM\s+([A-Z]{3})\b/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** A "Zárolások" rész sorai: dátum, típus, részletek, zárolt összeg; a kereskedő a következő sor(ok)ban. */
+function collectPending(pages: string[], currency: string): PdfPendingItem[] {
+  const lines = pages.join('\n').split(/\r?\n/);
+  const start = lines.findIndex((l) => normalize(l).startsWith('ZAROLASOK'));
+  if (start < 0) return [];
+  const out: PdfPendingItem[] = [];
+  let current: { date: string; amount: number; text: string[] } | null = null;
+  const flush = () => {
+    if (!current) return;
+    const text = current.text
+      .join(' ')
+      .replace(/Eredeti\b.*$/i, '')
+      .replace(/Terminal:\S+/gi, ' ')
+      .replace(/\+?\d[\d ]{7,}\d/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    out.push({ date: current.date, amount: current.amount, currency, description: text || 'Zárolt kártyás tétel' });
+    current = null;
+  };
+  for (const raw of lines.slice(start + 1)) {
+    const line = cleanLine(raw);
+    if (!line || isFooterLine(line)) continue;
+    const lead = line.match(LEADING_DATE_RE);
+    const date = lead ? toISO(lead) : null;
+    if (date) {
+      flush();
+      const cells = line.split('\t');
+      const money = findMoney(cells[cells.length - 1] ?? '');
+      if (money.length) current = { date, amount: -Math.abs(money[money.length - 1].value), text: [] };
+      continue;
+    }
+    if (current && current.text.length < 2) current.text.push(line.replace(/\t/g, ' '));
+  }
+  flush();
+  return out;
+}
+
+export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency?: string): PdfParseResult {
+  const currency = defaultCurrency ?? detectStatementCurrency(pages) ?? 'HUF';
   const { blocks, lineCount } = collectBlocks(pages);
   const warnings: string[] = [];
   const skipped: PdfParseResult['skipped'] = [];
@@ -304,12 +363,12 @@ export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency
 
   usable.forEach((b, i) => {
     let amount: number;
-    let currency = defaultCurrency;
+    let txCurrency = currency;
     const a =
       withBalance && b.money.length >= 2
         ? b.money[b.money.length - 2]
         : ([...b.money].reverse().find((m) => m.signed) ?? b.money[b.money.length - 1]);
-    currency = a.currency && a.currency !== 'Ft' ? a.currency : currency;
+    txCurrency = a.currency && a.currency !== 'Ft' ? a.currency : txCurrency;
 
     if (a.signed || (anySigned && a.value > 0)) {
       amount = a.value;
@@ -340,14 +399,14 @@ export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency
     const title = stripNumbers([...b.title, ...b.extra].join(' '));
     const description = [title, ...f.note, ...f.account.map((x) => `Számla: ${x}`)].filter(Boolean).join(' | ');
 
-    const base = `${b.date}|${amount}|${currency}|${normalize(counterparty)}|${normalize(title)}`;
+    const base = `${b.date}|${amount}|${txCurrency}|${normalize(counterparty)}|${normalize(title)}`;
     const n = (occurrences.get(base) ?? 0) + 1;
     occurrences.set(base, n);
     transactions.push({
       id: `${bank}-${stableId(`pdf|${base}#${n}`)}`,
       date: b.date,
       amount: Math.round(amount * 100) / 100,
-      currency,
+      currency: txCurrency,
       counterparty,
       description,
       bank,
@@ -361,5 +420,5 @@ export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency
   }
   // Időrend: a legrégebbi elöl, hogy az előnézet egységes legyen.
   transactions.sort((x, y) => x.date.localeCompare(y.date));
-  return { transactions, skipped, warnings, lineCount };
+  return { transactions, skipped, warnings, lineCount, currency, pending: collectPending(pages, currency) };
 }

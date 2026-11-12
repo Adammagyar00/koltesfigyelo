@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Alert, Platform, Pressable, View } from 'react-native';
 
+import { BackupSection, CustomCategoriesSection, RatesSection, ReminderSection } from '@/components/settings-sections';
 import { ThemedText } from '@/components/themed-text';
 import { useUpdate } from '@/components/update-banner';
 import { Button, Card, Field, Screen, SectionTitle } from '@/components/ui';
@@ -57,9 +58,15 @@ export default function SettingsScreen() {
         </ThemedText>
       </Card>
 
+      {loading ? null : <BackupSection />}
+      {loading ? null : <ReminderSection />}
+
       <SectionTitle>Saját számláim</SectionTitle>
       {/* A mentett profil betöltése után jelenik meg, hogy a mezők a mentett értékekkel induljanak. */}
       {loading ? null : <OwnAccountsForm />}
+
+      {loading ? null : <CustomCategoriesSection />}
+      {loading ? null : <RatesSection />}
 
       <SectionTitle>Saját szabályok</SectionTitle>
       {message ? <ThemedText style={{ color: theme.success }}>{message}</ThemedText> : null}

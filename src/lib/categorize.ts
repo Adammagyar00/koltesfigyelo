@@ -77,6 +77,20 @@ export function recategorize(
       assigned.set(id, { categoryId: TRANSFER_CATEGORY, categorySource: 'rule', ruleId: 'own:pair' });
     }
   }
+  // Megtakarítási számláról visszaérkező pénz (pl. CélBetétből a főszámlára): ugyanarra a számlára ment
+  // korábban a "Befektetés, megtakarítás" kiutalás, így ez annak a visszavétele, nem bevétel.
+  const finalCat = (t: Transaction) => assigned.get(t.id)?.categoryId ?? t.categoryId;
+  const savingsAccounts = new Set(
+    transactions.filter((t) => t.amount < 0 && finalCat(t) === SAVINGS_CATEGORY).flatMap((t) => accountRuns(t.description)),
+  );
+  if (savingsAccounts.size) {
+    for (const t of transactions) {
+      if (t.categorySource === 'user' || t.amount <= 0 || finalCat(t) === SAVINGS_CATEGORY) continue;
+      if (accountRuns(t.description).some((a) => savingsAccounts.has(a))) {
+        assigned.set(t.id, { categoryId: SAVINGS_CATEGORY, categorySource: 'rule', ruleId: 'own:savings' });
+      }
+    }
+  }
   const changed: Transaction[] = [];
   for (const tx of transactions) {
     const a = assigned.get(tx.id);
@@ -88,6 +102,13 @@ export function recategorize(
     }
   }
   return changed;
+}
+
+const SAVINGS_CATEGORY = 'befektetes';
+
+/** Hosszú számlaszám-szerű számsorok (16+ jegy) a szövegből, tagolás nélkül. */
+function accountRuns(text: string): string[] {
+  return (text.match(/\d[\d\s-]{14,}\d/g) ?? []).map((x) => x.replace(/\D/g, '')).filter((x) => x.length >= 16);
 }
 
 /** Kézi átsoroláskor javasolt szabályminta (a felhasználó szerkesztheti). */

@@ -7,13 +7,13 @@ import { transactionTitle } from '@/components/transaction-row';
 import { Button, Card, Empty, Field, Screen, SectionTitle } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { CATEGORIES, getCategory } from '@/lib/categories';
+import { allCategories, getCategory } from '@/lib/categories';
 import { countMatches, suggestRulePattern } from '@/lib/categorize';
 import { isGenericPattern } from '@/lib/text';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useData } from '@/state/data';
 
-const BANK_NAMES: Record<string, string> = { erste: 'Erste', mbh: 'MBH', wise: 'Wise', other: 'Egyéb' };
+const BANK_NAMES: Record<string, string> = { erste: 'Erste', mbh: 'MBH', wise: 'Wise', revolut: 'Revolut', other: 'Egyéb' };
 
 export default function TransactionScreen() {
   const theme = useTheme();
@@ -97,7 +97,7 @@ export default function TransactionScreen() {
 
       <SectionTitle>Kategória</SectionTitle>
       <View style={styles.grid}>
-        {CATEGORIES.map((c) => {
+        {allCategories().map((c) => {
           const selected = c.id === categoryId;
           return (
             <Pressable

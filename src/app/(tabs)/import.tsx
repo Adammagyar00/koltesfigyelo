@@ -13,7 +13,7 @@ import { parseStatement, type ColumnMapping, type ParseNeedsMapping, type ParseS
 import { base64ToBytes, decodeBankFile } from '@/lib/encoding';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { BankId } from '@/lib/types';
-import { parsePdfStatement } from '@/lib/pdf/statement-pdf';
+import { parsePdfStatement, type PdfPendingItem } from '@/lib/pdf/statement-pdf';
 import { useData } from '@/state/data';
 
 import { extractPdfText, isPdfSupported } from '../../../modules/pdf-text';
@@ -21,13 +21,14 @@ import { extractPdfText, isPdfSupported } from '../../../modules/pdf-text';
 const BANKS: { id: BankId; name: string; hint: string }[] = [
   { id: 'erste', name: 'Erste', hint: 'George app → Számla → Kivonatok → PDF letöltése, vagy George netbank → Tranzakciók → Exportálás → CSV' },
   { id: 'mbh', name: 'MBH', hint: 'MBH App / Netbank → Számlatörténet → Letöltés → CSV' },
+  { id: 'revolut', name: 'Revolut', hint: 'Revolut app → számla → … → Kivonat → Excel/CSV formátum, a kívánt időszak' },
   { id: 'wise', name: 'Wise', hint: 'Wise → Egyenleg → Kivonatok → CSV' },
 ];
 
 type Step =
   | { kind: 'pick' }
   | { kind: 'mapping'; text: string; fileName: string; result: ParseNeedsMapping }
-  | { kind: 'preview'; fileName: string; result: ParseSuccess; warnings?: string[]; pdfText?: string }
+  | { kind: 'preview'; fileName: string; result: ParseSuccess; warnings?: string[]; pdfText?: string; pending?: PdfPendingItem[] }
   | { kind: 'pdf-failed'; fileName: string; text: string }
   | { kind: 'done'; added: number; duplicates: number };
 
@@ -112,8 +113,13 @@ export default function ImportScreen() {
     setStep({
       kind: 'preview',
       fileName: asset.name,
-      warnings: r.warnings,
+      warnings: [
+        ...r.warnings,
+        ...(r.currency !== 'HUF' ? [`A kivonat pénzneme ${r.currency}; az összesítésekben a Beállításokban megadott árfolyammal számoljuk forintra.`] : []),
+        ...(r.pending.length ? [`${r.pending.length} zárolt, még le nem könyvelt tétel: ezeket várható kiadásként mutatjuk.`] : []),
+      ],
       pdfText: text,
+      pending: r.pending,
       result: {
         ok: true,
         bank,
@@ -125,11 +131,15 @@ export default function ImportScreen() {
     });
   };
 
-  const confirm = async (result: ParseSuccess, replaceIds?: string[]) => {
+  const confirm = async (result: ParseSuccess, replaceIds?: string[], pending?: PdfPendingItem[]) => {
     setBusy(true);
     setError(null);
     try {
-      const outcome = await importTransactions(result.transactions, replaceIds);
+      const outcome = await importTransactions(
+        result.transactions,
+        replaceIds,
+        pending ? { bank: result.bank, items: pending } : undefined,
+      );
       setStep({ kind: 'done', ...outcome });
     } catch (e) {
       setError(`Mentés sikertelen: ${(e as Error).message}`);
@@ -162,7 +172,7 @@ export default function ImportScreen() {
             <ThemedText>{BANKS.find((b) => b.id === bank)?.hint}</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
               A menüpontok neve banki verziónként eltérhet. A PDF-kivonatot és a CSV-exportot is beolvassuk. A
-              Wise-t a fájl alapján magától is felismerjük.
+              Revolutot és a Wise-t a fájl alapján magától is felismerjük.
             </ThemedText>
           </Card>
           <Button title="Kivonat kiválasztása (PDF vagy CSV)" onPress={pick} loading={busy} />
@@ -192,7 +202,7 @@ export default function ImportScreen() {
           rows={preview(step.result.transactions)}
           overlap={overlapping(step.result.transactions)}
           busy={busy}
-          onConfirm={(replaceIds) => confirm(step.result, replaceIds)}
+          onConfirm={(replaceIds) => confirm(step.result, replaceIds, step.pending)}
           onCancel={() => setStep({ kind: 'pick' })}
         />
       ) : null}
@@ -291,7 +301,7 @@ function PreviewStep({
         ))}
         {result.detectedBank && result.detectedBank !== selectedBank ? (
           <ThemedText style={{ color: theme.warning }}>
-            Ez {result.detectedBank === 'wise' ? 'Wise' : result.detectedBank}-kivonatnak tűnik, úgy dolgoztuk fel.
+            Ez {result.detectedBank === 'wise' ? 'Wise' : result.detectedBank === 'revolut' ? 'Revolut' : result.detectedBank}-kivonatnak tűnik, úgy dolgoztuk fel.
           </ThemedText>
         ) : null}
         <ThemedText>

@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { cleanProfile, EMPTY_PROFILE, type OwnProfile } from '@/lib/own-transfers';
+import { mergeSettings, type AppSettings } from '@/lib/settings';
 import type { Budget, Rule, Transaction } from '@/lib/types';
 
 /**
@@ -12,6 +13,7 @@ import type { Budget, Rule, Transaction } from '@/lib/types';
  *   kf:v1:rules        – a felhasználó saját szabályai
  *   kf:v1:budgets      – havi keretek
  *   kf:v1:profile      – saját név és számlaszámok (a saját átvezetések felismeréséhez)
+ *   kf:v1:settings     – árfolyamok, emlékeztető, saját kategóriák, zárolt tételek
  *
  * Az adatokat induláskor egyszer betöltjük a memóriába; minden írás a memóriát frissíti,
  * majd a megváltozott kulcsokat menti, és értesíti a feliratkozókat.
@@ -22,6 +24,7 @@ const TX_PREFIX = `${PREFIX}tx:`;
 const RULES_KEY = `${PREFIX}rules`;
 const BUDGETS_KEY = `${PREFIX}budgets`;
 const PROFILE_KEY = `${PREFIX}profile`;
+const SETTINGS_KEY = `${PREFIX}settings`;
 
 type CollectionName = 'transactions' | 'rules' | 'budgets';
 
@@ -235,4 +238,85 @@ export async function loadProfile(): Promise<OwnProfile> {
 
 export async function saveProfile(profile: OwnProfile): Promise<void> {
   await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(cleanProfile(profile)));
+}
+
+export async function loadSettings(): Promise<AppSettings> {
+  const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+  try {
+    return mergeSettings(raw ? JSON.parse(raw) : null);
+  } catch {
+    return mergeSettings(null);
+  }
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+/** Teljes biztonsági mentés tartalma (egy JSON-fájl). */
+export interface BackupData {
+  app: 'koltesfigyelo';
+  version: 1;
+  exportedAt: string;
+  transactions: Transaction[];
+  rules: Rule[];
+  budgets: Budget[];
+  profile: OwnProfile;
+  settings: AppSettings;
+}
+
+export async function exportAll(): Promise<BackupData> {
+  const s = await load();
+  return {
+    app: 'koltesfigyelo',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    transactions: [...s.transactions.values()],
+    rules: s.rules,
+    budgets: s.budgets,
+    profile: await loadProfile(),
+    settings: await loadSettings(),
+  };
+}
+
+/** Ellenőrzi, hogy a fájl a Költésfigyelő mentése-e; hibás fájlnál magyar hibaüzenettel dob. */
+export function validateBackup(data: unknown): BackupData {
+  const d = data as Partial<BackupData> | null;
+  if (!d || d.app !== 'koltesfigyelo' || d.version !== 1 || !Array.isArray(d.transactions)) {
+    throw new Error('Ez nem a Költésfigyelő mentésfájlja.');
+  }
+  const okTx = d.transactions.every(
+    (t) => t && typeof t.id === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date) && typeof t.amount === 'number',
+  );
+  if (!okTx) throw new Error('A mentésfájl sérült (hibás tételek).');
+  return {
+    app: 'koltesfigyelo',
+    version: 1,
+    exportedAt: d.exportedAt ?? '',
+    transactions: d.transactions,
+    rules: Array.isArray(d.rules) ? d.rules.filter((r) => r && r.source === 'user') : [],
+    budgets: Array.isArray(d.budgets) ? d.budgets : [],
+    profile: cleanProfile({ ...EMPTY_PROFILE, ...(d.profile ?? {}) }),
+    settings: mergeSettings(d.settings),
+  };
+}
+
+/** Minden jelenlegi adat cseréje a mentés tartalmára. */
+export function restoreAll(data: BackupData): Promise<void> {
+  return serial(async () => {
+    const s = await load();
+    const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(PREFIX));
+    if (keys.length) await AsyncStorage.multiRemove(keys);
+    s.transactions = new Map(data.transactions.map((t) => [t.id, t]));
+    s.rules = data.rules;
+    s.budgets = data.budgets;
+    await persistMonths(s, new Set(data.transactions.map((t) => t.date.slice(0, 7))));
+    await AsyncStorage.multiSet([
+      [RULES_KEY, JSON.stringify(s.rules)],
+      [BUDGETS_KEY, JSON.stringify(s.budgets)],
+      [PROFILE_KEY, JSON.stringify(data.profile)],
+      [SETTINGS_KEY, JSON.stringify(data.settings)],
+    ]);
+    (['transactions', 'rules', 'budgets'] as const).forEach((n) => emit(s, n));
+  });
 }
