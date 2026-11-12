@@ -18,6 +18,8 @@ export interface AppSettings {
   customCategories: Category[];
   /** Bankonként a legutóbb importált kivonat zárolt tételei. */
   pending: PendingItem[];
+  /** A felhasználó BKK-havibérletének ára (Ft) a közlekedési tipphez. */
+  passPrice: number;
 }
 
 /** Becsült alapértékek – a Beállításokban átírhatók a pontos árfolyamra. */
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reminder: false,
   customCategories: [],
   pending: [],
+  passPrice: 950,
 };
 
 export function mergeSettings(raw: Partial<AppSettings> | null | undefined): AppSettings {
@@ -37,5 +40,6 @@ export function mergeSettings(raw: Partial<AppSettings> | null | undefined): App
     rates: { ...DEFAULT_RATES, ...(raw?.rates ?? {}) },
     customCategories: Array.isArray(raw?.customCategories) ? raw.customCategories : [],
     pending: Array.isArray(raw?.pending) ? raw.pending : [],
+    passPrice: typeof raw?.passPrice === 'number' && raw.passPrice > 0 ? raw.passPrice : DEFAULT_SETTINGS.passPrice,
   };
 }

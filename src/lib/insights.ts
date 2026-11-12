@@ -1,6 +1,6 @@
 import { getCategory } from './categories';
 import { formatMoney } from './format';
-import { merchantKey, normalize } from './text';
+import { merchantKey, normalize, stripWalletPrefix } from './text';
 import type { Budget, Transaction } from './types';
 
 /** 'YYYY-MM' */
@@ -114,6 +114,42 @@ export function investmentTrend(txs: Transaction[], lastMonth: MonthKey, months 
     out.push({ month, invested: Math.round(invested), income, rate: income > 0 ? invested / income : null });
   }
   return out;
+}
+
+export interface InvestmentLine {
+  label: string;
+  /** Betett összeg (pozitív). */
+  deposited: number;
+  /** Visszavett összeg (pozitív). */
+  withdrawn: number;
+  net: number;
+}
+
+/**
+ * A hónap befektetései/megtakarításai célonként (platform vagy megtakarítási számla), hogy látszódjon,
+ * miből jön ki a havi összeg. A számlaszám szerint csoportosít, így a betét és a visszavétel egy sorba kerül.
+ */
+export function investmentBreakdown(txs: Transaction[], month: MonthKey, currency = 'HUF'): InvestmentLine[] {
+  const groups = new Map<string, InvestmentLine & { labelFromDeposit: boolean }>();
+  for (const t of txs) {
+    if (t.categoryId !== 'befektetes' || t.currency !== currency || monthOf(t.date) !== month) continue;
+    const account = (t.description.match(/\d[\d\s-]{14,}\d/g) ?? []).map((x) => x.replace(/\D/g, '')).find((x) => x.length >= 16);
+    const name = stripWalletPrefix(t.counterparty) || t.description.split(' | ')[0] || 'Ismeretlen';
+    const key = account ?? merchantKey(t.counterparty, t.description) ?? name;
+    const g = groups.get(key) ?? { label: name, deposited: 0, withdrawn: 0, net: 0, labelFromDeposit: false };
+    // A cél nevét a betétből vesszük (a visszavételnél gyakran a saját neved szerepel).
+    if (t.amount < 0 && !g.labelFromDeposit) {
+      g.label = name;
+      g.labelFromDeposit = true;
+    }
+    if (t.amount < 0) g.deposited += -t.amount;
+    else g.withdrawn += t.amount;
+    g.net = g.deposited - g.withdrawn;
+    groups.set(key, g);
+  }
+  return [...groups.values()]
+    .map(({ labelFromDeposit: _l, ...g }) => ({ ...g, deposited: Math.round(g.deposited), withdrawn: Math.round(g.withdrawn), net: Math.round(g.net) }))
+    .sort((a, b) => b.deposited + b.withdrawn - (a.deposited + a.withdrawn));
 }
 
 export type BudgetState = 'ok' | 'warning' | 'over';
@@ -231,7 +267,7 @@ export interface SavingTip {
  * Változó, csökkenthető kategóriák. Csak ezeknél van értelme a hó közbeni tempóból vetíteni;
  * a havonta egyszer esedékes tételeket (előfizetés, rezsi, lakbér) nem vetítjük fel.
  */
-/** Budapesti havibérlet ára (Ft) – ha változik, itt kell átírni. */
+/** Budapesti teljes árú havibérlet (Ft). A felhasználó a sajátját (pl. kedvezményes) a Beállításokban adja meg. */
 export const BKK_MONTHLY_PASS = 8950;
 /** Roller-, bicikli- és taxiszolgáltatások. */
 const MICROMOBILITY = /\b(LIME|TIER|DOTT|BOLT|BUBI|UBER|TAXI|FOTAXI|FREENOW|FREE NOW)\b/;
@@ -248,6 +284,7 @@ export function savingTips(
   today: string,
   budgets: Budget[] = [],
   currency = 'HUF',
+  passPrice = BKK_MONTHLY_PASS,
 ): SavingTip[] {
   const tips: SavingTip[] = [];
   const cur = summarizeMonth(txs, month, currency);
@@ -331,16 +368,16 @@ export function savingTips(
   );
   const microTotal = micro.reduce((s, t) => s - t.amount, 0);
   const microProjected = scale(microTotal);
-  if (!hasPass && micro.length >= 4 && microProjected > BKK_MONTHLY_PASS) {
+  if (!hasPass && micro.length >= 4 && microProjected > passPrice) {
     tips.push({
       id: 'transport:pass',
       icon: '🛴',
       title: `Roller és taxi: ${micro.length} út, ${fmt(microTotal)} ebben a hónapban`,
       body:
         `${isCurrent ? `Ezzel a tempóval a hónap végére kb. ${fmt(microProjected)} lesz. ` : ''}` +
-        `Egy BKK-havibérlet kb. ${fmt(BKK_MONTHLY_PASS)}: ha az utak nagy részét tömegközlekedéssel tennéd meg, ` +
-        `havonta kb. ${fmt(microProjected - BKK_MONTHLY_PASS)} maradna nálad.`,
-      monthlySaving: Math.round(microProjected - BKK_MONTHLY_PASS),
+        `A BKK-havibérleted ${fmt(passPrice)}: ha az utak nagy részét tömegközlekedéssel tennéd meg, ` +
+        `havonta kb. ${fmt(microProjected - passPrice)} maradna nálad.`,
+      monthlySaving: Math.round(microProjected - passPrice),
     });
   }
 

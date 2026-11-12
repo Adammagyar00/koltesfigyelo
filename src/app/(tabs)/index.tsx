@@ -34,7 +34,7 @@ export default function OverviewScreen() {
       previous,
       trend: monthlyTrend(transactions, month, 6),
       budgets: budgetStatuses(budgets, summary, today).filter((b) => b.state !== 'ok'),
-      tips: savingTips(transactions, month, today, budgets).slice(0, 2),
+      tips: savingTips(transactions, month, today, budgets, 'HUF', settings.passPrice).slice(0, 2),
       transfers: transactions.filter((t) => monthOf(t.date) === month && t.categoryId === 'atvezetes').length,
       invested: transactions
         .filter((t) => monthOf(t.date) === month && t.categoryId === 'befektetes' && t.currency === 'HUF')
@@ -44,7 +44,7 @@ export default function OverviewScreen() {
         (t) => monthOf(t.date) === month && t.amount < 0 && t.categorySource === 'default',
       ).length,
     };
-  }, [transactions, budgets, month, today]);
+  }, [transactions, budgets, month, today, settings.passPrice]);
 
   // Zárolt, még le nem könyvelt tételek (a legutóbbi kivonatokból) – csak tájékoztatásul, nincsenek az összegekben.
   const pending = settings.pending.filter((p) => p.amount < 0);

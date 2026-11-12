@@ -7,24 +7,25 @@ import { Button, Card, CategoryBadge, Empty, Loading, Screen, SectionTitle, Titl
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDate, formatMoney, formatMonth, todayISO } from '@/lib/format';
-import type { InvestmentMonth } from '@/lib/insights';
-import { detectRecurring, investmentTrend, monthOf, savingTips } from '@/lib/insights';
+import type { InvestmentLine, InvestmentMonth } from '@/lib/insights';
+import { detectRecurring, investmentBreakdown, investmentTrend, monthOf, savingTips } from '@/lib/insights';
 import { useData } from '@/state/data';
 
 export default function InsightsScreen() {
   const theme = useTheme();
   // Az összesítésekhez a forintra számolt tételek kellenek.
-  const { baseTransactions: transactions, budgets, loading } = useData();
+  const { baseTransactions: transactions, budgets, loading, settings } = useData();
   const today = todayISO();
   const month = transactions[0] && monthOf(transactions[0].date) < monthOf(today) ? monthOf(transactions[0].date) : monthOf(today);
 
-  const { tips, recurring, investments } = useMemo(
+  const { tips, recurring, investments, investmentLines } = useMemo(
     () => ({
-      tips: savingTips(transactions, month, today, budgets),
+      tips: savingTips(transactions, month, today, budgets, 'HUF', settings.passPrice),
       investments: investmentTrend(transactions, month, 6),
+      investmentLines: investmentBreakdown(transactions, month),
       recurring: detectRecurring(transactions, today),
     }),
-    [transactions, budgets, month, today],
+    [transactions, budgets, month, today, settings.passPrice],
   );
 
   if (loading) return <Loading />;
@@ -83,7 +84,7 @@ export default function InsightsScreen() {
             ))
           )}
 
-          <InvestmentSection months={investments} />
+          <InvestmentSection months={investments} lines={investmentLines} />
 
           <SectionTitle>Rendszeres terhelések</SectionTitle>
           {recurring.length === 0 ? (
@@ -133,7 +134,7 @@ export default function InsightsScreen() {
   );
 }
 
-function InvestmentSection({ months }: { months: InvestmentMonth[] }) {
+function InvestmentSection({ months, lines }: { months: InvestmentMonth[]; lines: InvestmentLine[] }) {
   const theme = useTheme();
   const current = months[months.length - 1];
   const withData = months.filter((m) => m.invested !== 0);
@@ -172,9 +173,33 @@ function InvestmentSection({ months }: { months: InvestmentMonth[] }) {
             </View>
           ))}
         </View>
+        {lines.length > 0 ? (
+          <View style={{ gap: 6, marginTop: Spacing.two }}>
+            {lines.map((l) => (
+              <Pressable
+                key={l.label}
+                onPress={() => router.push({ pathname: '/transactions', params: { month: current.month, category: 'befektetes' } })}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
+                <View style={{ flex: 1 }}>
+                  <ThemedText numberOfLines={1} style={{ fontWeight: '600' }}>
+                    {l.label}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    be: {formatMoney(l.deposited)}
+                    {l.withdrawn ? ` · vissza: ${formatMoney(l.withdrawn)}` : ''}
+                  </ThemedText>
+                </View>
+                <ThemedText style={{ fontWeight: '700', color: l.net >= 0 ? theme.text : theme.danger }}>
+                  {formatMoney(l.net)}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         <ThemedText type="small" themeColor="textSecondary">
           Átlagosan havi {formatMoney(avg)}. Ide számít a befektetési platform (pl. Bybit, Lightyear) és a megtakarítási
-          számla (pl. CélBetét); az onnan visszavett pénz levonódik.
+          számla (pl. CélBetét); az onnan visszavett pénz levonódik. Ha valamelyik sor nem befektetés, koppints rá, és
+          sorold át a tételt.
         </ThemedText>
       </Card>
     </>

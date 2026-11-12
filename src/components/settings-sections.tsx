@@ -166,20 +166,22 @@ export function RatesSection() {
     Object.fromEntries(currencies.map((c) => [c, String(settings.rates[c] ?? '')])),
   );
   const [saved, setSaved] = useState(false);
+  const [pass, setPass] = useState(String(settings.passPrice));
 
   const save = async () => {
+    const passPrice = parseAmount(pass);
     const rates = { ...settings.rates };
     for (const c of currencies) {
       const v = parseAmount(values[c] ?? '');
       if (v && v > 0) rates[c] = v;
     }
-    await updateSettings({ rates });
+    await updateSettings({ rates, ...(passPrice && passPrice > 0 ? { passPrice } : {}) });
     setSaved(true);
   };
 
   return (
     <>
-      <SectionTitle>Árfolyamok</SectionTitle>
+      <SectionTitle>Árfolyamok és bérlet</SectionTitle>
       <Card>
         <ThemedText type="small" themeColor="textSecondary">
           A nem forintos tételeket (pl. euró-számla, Revolut, Wise) ezzel az árfolyammal számoljuk forintra az
@@ -202,8 +204,26 @@ export function RatesSection() {
             <ThemedText>Ft</ThemedText>
           </View>
         ))}
+        <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.two }}>
+          A BKK-havibérleted ára (a közlekedési tipphez; diák-, nyugdíjas- vagy más kedvezményes bérletnél ennyit írj):
+        </ThemedText>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
+          <ThemedText style={{ width: 70, fontWeight: '600' }}>Bérlet</ThemedText>
+          <View style={{ flex: 1 }}>
+            <Field
+              value={pass}
+              onChangeText={(v) => {
+                setSaved(false);
+                setPass(v);
+              }}
+              keyboardType="number-pad"
+              placeholder="950"
+            />
+          </View>
+          <ThemedText>Ft</ThemedText>
+        </View>
         {saved ? <ThemedText style={{ color: theme.success }}>Mentve.</ThemedText> : null}
-        <Button variant="secondary" title="Árfolyamok mentése" onPress={save} />
+        <Button variant="secondary" title="Mentés" onPress={save} />
       </Card>
     </>
   );

@@ -77,15 +77,25 @@ export function recategorize(
       assigned.set(id, { categoryId: TRANSFER_CATEGORY, categorySource: 'rule', ruleId: 'own:pair' });
     }
   }
-  // Megtakarítási számláról visszaérkező pénz (pl. CélBetétből a főszámlára): ugyanarra a számlára ment
-  // korábban a "Befektetés, megtakarítás" kiutalás, így ez annak a visszavétele, nem bevétel.
-  const finalCat = (t: Transaction) => assigned.get(t.id)?.categoryId ?? t.categoryId;
+  // Megtakarítási számlák: ha egy számláról kiderült, hogy megtakarítási (pl. a partner neve "CélBetét",
+  // vagy a felhasználó kézzel oda sorolta), akkor MINDEN oda menő és onnan jövő utalás megtakarítás –
+  // akkor is, ha az utalásban a számla egyedi neve (pl. "12345") vagy a saját neved szerepel.
+  // Így a betétel és a visszavétel ugyanabba a kategóriába kerül, és nettósítható.
+  const current = (t: Transaction) => {
+    const a = assigned.get(t.id);
+    return { categoryId: a?.categoryId ?? t.categoryId, ruleId: a ? a.ruleId : t.ruleId, source: a?.categorySource ?? t.categorySource };
+  };
   const savingsAccounts = new Set(
-    transactions.filter((t) => t.amount < 0 && finalCat(t) === SAVINGS_CATEGORY).flatMap((t) => accountRuns(t.description)),
+    transactions
+      .filter((t) => {
+        const c = current(t);
+        return c.categoryId === SAVINGS_CATEGORY && (c.source === 'user' || !c.ruleId?.startsWith('own:'));
+      })
+      .flatMap((t) => accountRuns(t.description)),
   );
   if (savingsAccounts.size) {
     for (const t of transactions) {
-      if (t.categorySource === 'user' || t.amount <= 0 || finalCat(t) === SAVINGS_CATEGORY) continue;
+      if (t.categorySource === 'user' || current(t).categoryId === SAVINGS_CATEGORY) continue;
       if (accountRuns(t.description).some((a) => savingsAccounts.has(a))) {
         assigned.set(t.id, { categoryId: SAVINGS_CATEGORY, categorySource: 'rule', ruleId: 'own:savings' });
       }
