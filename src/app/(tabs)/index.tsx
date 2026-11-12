@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { MonthSwitcher } from '@/components/month-switcher';
 import { ThemedText } from '@/components/themed-text';
+import { UpdateBanner } from '@/components/update-banner';
 import { Button, Card, CategoryBadge, Empty, Loading, ProgressBar, Screen, SectionTitle, Title } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -56,6 +57,7 @@ export default function OverviewScreen() {
     return (
       <Screen>
         {header}
+        <UpdateBanner />
         {error ? <ThemedText style={{ color: theme.danger }}>{error}</ThemedText> : null}
         <Empty
           title="Még nincsenek tételeid"
@@ -73,6 +75,7 @@ export default function OverviewScreen() {
   return (
     <Screen>
       {header}
+      <UpdateBanner />
       <MonthSwitcher month={month} onChange={setPicked} max={currentMonth} />
 
       <Card>

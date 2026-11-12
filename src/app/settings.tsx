@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Alert, Platform, Pressable, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { useUpdate } from '@/components/update-banner';
 import { Button, Card, Screen, SectionTitle } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getCategory } from '@/lib/categories';
+import { currentVersion, updatesSupported } from '@/services/updates';
 import { useData } from '@/state/data';
 
 function confirm(title: string, message: string): Promise<boolean> {
@@ -22,6 +24,7 @@ export default function SettingsScreen() {
   const theme = useTheme();
   const { userRules, transactions, budgets, removeRule, clearAll } = useData();
   const [message, setMessage] = useState<string | null>(null);
+  const upd = useUpdate();
 
   const rules = [...userRules].sort((a, b) => a.pattern.localeCompare(b.pattern));
 
@@ -78,6 +81,29 @@ export default function SettingsScreen() {
             );
           })
         )}
+      </Card>
+
+      <SectionTitle>Verzió</SectionTitle>
+      <Card>
+        <ThemedText>Költésfigyelő {currentVersion}</ThemedText>
+        {updatesSupported ? (
+          <>
+            {upd.update ? (
+              <>
+                <ThemedText style={{ color: theme.tint, fontWeight: '700' }}>Új verzió: {upd.update.version}</ThemedText>
+                <Button title="Frissítés" onPress={upd.install} loading={upd.installing} />
+              </>
+            ) : upd.checkedOnce && !upd.error ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                Ez a legfrissebb verzió.
+              </ThemedText>
+            ) : null}
+            {upd.error ? <ThemedText style={{ color: theme.danger }}>{upd.error}</ThemedText> : null}
+            {!upd.update ? (
+              <Button variant="secondary" title="Frissítések keresése" onPress={() => upd.check(true)} loading={upd.checking} />
+            ) : null}
+          </>
+        ) : null}
       </Card>
 
       <Button variant="danger" title="Minden adat törlése" onPress={wipe} style={{ marginTop: Spacing.four }} />
