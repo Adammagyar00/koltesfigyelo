@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = "hu.koltesfigyelo"
+version = "1.0.0"
+
+android {
+  namespace "hu.koltesfigyelo.pdftext"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  // PDF-szöveg kinyerése a telefonon (Apache PDFBox Android-portja)
+  implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+}

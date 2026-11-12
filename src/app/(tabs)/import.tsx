@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, Share, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { TransactionRow } from '@/components/transaction-row';
@@ -13,10 +13,13 @@ import { parseStatement, type ColumnMapping, type ParseNeedsMapping, type ParseS
 import { base64ToBytes, decodeBankFile } from '@/lib/encoding';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { BankId } from '@/lib/types';
+import { parsePdfStatement } from '@/lib/pdf/statement-pdf';
 import { useData } from '@/state/data';
 
+import { extractPdfText, isPdfSupported } from '../../../modules/pdf-text';
+
 const BANKS: { id: BankId; name: string; hint: string }[] = [
-  { id: 'erste', name: 'Erste', hint: 'George → Számla → Tranzakciók → Exportálás → CSV' },
+  { id: 'erste', name: 'Erste', hint: 'George app → Számla → Kivonatok → PDF letöltése, vagy George netbank → Tranzakciók → Exportálás → CSV' },
   { id: 'mbh', name: 'MBH', hint: 'MBH App / Netbank → Számlatörténet → Letöltés → CSV' },
   { id: 'wise', name: 'Wise', hint: 'Wise → Egyenleg → Kivonatok → CSV' },
 ];
@@ -24,7 +27,8 @@ const BANKS: { id: BankId; name: string; hint: string }[] = [
 type Step =
   | { kind: 'pick' }
   | { kind: 'mapping'; text: string; fileName: string; result: ParseNeedsMapping }
-  | { kind: 'preview'; fileName: string; result: ParseSuccess }
+  | { kind: 'preview'; fileName: string; result: ParseSuccess; warnings?: string[] }
+  | { kind: 'pdf-failed'; fileName: string; text: string }
   | { kind: 'done'; added: number; duplicates: number };
 
 async function readPickedFile(asset: DocumentPicker.DocumentPickerAsset): Promise<Uint8Array> {
@@ -46,7 +50,7 @@ export default function ImportScreen() {
     setError(null);
     try {
       const res = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/comma-separated-values', 'text/plain', 'application/csv', 'application/vnd.ms-excel', '*/*'],
+        type: ['application/pdf', 'text/csv', 'text/comma-separated-values', 'text/plain', 'application/csv', 'application/vnd.ms-excel', '*/*'],
         base64: true,
         copyToCacheDirectory: true,
       });
@@ -57,6 +61,10 @@ export default function ImportScreen() {
         return;
       }
       setBusy(true);
+      if (/\.pdf$/i.test(asset.name) || asset.mimeType === 'application/pdf') {
+        await importPdf(asset);
+        return;
+      }
       const { text } = decodeBankFile(await readPickedFile(asset));
       const result = parseStatement(text, { bank });
       if (result.ok) {
@@ -72,6 +80,48 @@ export default function ImportScreen() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const importPdf = async (asset: DocumentPicker.DocumentPickerAsset) => {
+    if (!isPdfSupported) {
+      setError('A PDF-beolvasás csak a telefonos appban működik.');
+      return;
+    }
+    let pages: string[];
+    try {
+      pages = await extractPdfText(asset.uri);
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      setError(
+        code === 'ERR_PDF_PASSWORD'
+          ? 'Ez a PDF jelszóval védett, így nem tudjuk kiolvasni. Töltsd le jelszó nélkül, ha a bank engedi.'
+          : `A PDF nem olvasható: ${(e as Error).message}`,
+      );
+      return;
+    }
+    const text = pages.join('\n');
+    if (!text.trim()) {
+      setError('Ebben a PDF-ben nincs kiolvasható szöveg (valószínűleg beszkennelt kép).');
+      return;
+    }
+    const r = parsePdfStatement(pages, bank);
+    if (r.transactions.length === 0) {
+      setStep({ kind: 'pdf-failed', fileName: asset.name, text });
+      return;
+    }
+    setStep({
+      kind: 'preview',
+      fileName: asset.name,
+      warnings: r.warnings,
+      result: {
+        ok: true,
+        bank,
+        transactions: r.transactions,
+        skipped: r.skipped,
+        headers: [],
+        mapping: { date: 0, counterparty: [], description: [] },
+      },
+    });
   };
 
   const confirm = async (result: ParseSuccess) => {
@@ -110,11 +160,11 @@ export default function ImportScreen() {
             </ThemedText>
             <ThemedText>{BANKS.find((b) => b.id === bank)?.hint}</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              A menüpontok neve banki verziónként eltérhet. A lényeg: számlatörténet, CSV formátumban. A Wise-t
-              a fájl alapján magától is felismerjük.
+              A menüpontok neve banki verziónként eltérhet. A PDF-kivonatot és a CSV-exportot is beolvassuk. A
+              Wise-t a fájl alapján magától is felismerjük.
             </ThemedText>
           </Card>
-          <Button title="CSV-fájl kiválasztása" onPress={pick} loading={busy} />
+          <Button title="Kivonat kiválasztása (PDF vagy CSV)" onPress={pick} loading={busy} />
           <ThemedText type="small" themeColor="textSecondary">
             Ugyanazt az időszakot nyugodtan importálhatod újra: a már meglévő tételeket felismerjük és kihagyjuk, a
             kézi besorolásaid megmaradnak.
@@ -135,12 +185,29 @@ export default function ImportScreen() {
         <PreviewStep
           fileName={step.fileName}
           result={step.result}
+          warnings={step.warnings}
           selectedBank={bank}
           rows={preview(step.result.transactions)}
           busy={busy}
           onConfirm={() => confirm(step.result)}
           onCancel={() => setStep({ kind: 'pick' })}
         />
+      ) : null}
+
+      {step.kind === 'pdf-failed' ? (
+        <Card>
+          <ThemedText style={{ fontWeight: '700' }}>Nem találtunk tételeket ebben a PDF-ben</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            A PDF szövegét ki tudtuk olvasni, de nem ismertük fel benne a tételsorokat. Ha a kiolvasott szöveget
+            elküldöd, a beolvasás hozzáigazítható a bankod formátumához. Elküldés előtt nézd át: a szövegben benne
+            lehet a neved és a számlaszámod is.
+          </ThemedText>
+          <Button
+            title="Kiolvasott szöveg megosztása"
+            onPress={() => Share.share({ title: step.fileName, message: step.text.slice(0, 20000) })}
+          />
+          <Button variant="secondary" title="Vissza" onPress={() => setStep({ kind: 'pick' })} />
+        </Card>
       ) : null}
 
       {step.kind === 'done' ? (
@@ -161,6 +228,7 @@ export default function ImportScreen() {
 function PreviewStep({
   fileName,
   result,
+  warnings,
   selectedBank,
   rows,
   busy,
@@ -169,6 +237,7 @@ function PreviewStep({
 }: {
   fileName: string;
   result: ParseSuccess;
+  warnings?: string[];
   selectedBank: BankId;
   rows: ReturnType<ReturnType<typeof useData>['preview']>;
   busy: boolean;
@@ -205,6 +274,11 @@ function PreviewStep({
         <ThemedText themeColor="textSecondary">
           {formatDate(dates[0])} – {formatDate(dates[dates.length - 1])} · {currencies.join(', ')}
         </ThemedText>
+        {warnings?.map((w) => (
+          <ThemedText key={w} style={{ color: theme.warning }}>
+            {w}
+          </ThemedText>
+        ))}
         {result.detectedBank && result.detectedBank !== selectedBank ? (
           <ThemedText style={{ color: theme.warning }}>
             Ez {result.detectedBank === 'wise' ? 'Wise' : result.detectedBank}-kivonatnak tűnik, úgy dolgoztuk fel.

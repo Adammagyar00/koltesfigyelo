@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["hu.koltesfigyelo.pdftext.PdfTextModule"]
+  }
+}
