@@ -1,94 +1,204 @@
-import {
-  collection,
-  deleteDoc,
-  doc,
-  onSnapshot,
-  setDoc,
-  writeBatch,
-  type DocumentData,
-} from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { Budget, Rule, Transaction } from '@/lib/types';
 
-import { db } from './firebase';
-
 /**
- * Adatszerkezet Firestore-ban (minden felhasználónak a sajátja, lásd firestore.rules):
- *   users/{uid}/transactions/{transactionId}
- *   users/{uid}/rules/{ruleId}         – csak a felhasználó saját szabályai
- *   users/{uid}/budgets/{categoryId}
+ * Helyi adattárolás a telefonon (AsyncStorage), fiók és szerver nélkül.
+ *
+ * Kulcsok:
+ *   kf:v1:tx:YYYY-MM   – az adott hónap tételei (JSON tömb). Havonta bontjuk, hogy egy kulcs se
+ *                        legyen túl nagy (Androidon egy elem mérete korlátozott).
+ *   kf:v1:rules        – a felhasználó saját szabályai
+ *   kf:v1:budgets      – havi keretek
+ *
+ * Az adatokat induláskor egyszer betöltjük a memóriába; minden írás a memóriát frissíti,
+ * majd a megváltozott kulcsokat menti, és értesíti a feliratkozókat.
  */
+
+const PREFIX = 'kf:v1:';
+const TX_PREFIX = `${PREFIX}tx:`;
+const RULES_KEY = `${PREFIX}rules`;
+const BUDGETS_KEY = `${PREFIX}budgets`;
 
 type CollectionName = 'transactions' | 'rules' | 'budgets';
 
-function requireDb() {
-  if (!db) throw new Error('A Firebase nincs beállítva.');
-  return db;
+interface State {
+  transactions: Map<string, Transaction>;
+  rules: Rule[];
+  budgets: Budget[];
 }
 
-const col = (uid: string, name: CollectionName) => collection(requireDb(), 'users', uid, name);
+let state: State | null = null;
+let loading: Promise<State> | null = null;
+const listeners: Record<CollectionName, Set<(items: unknown[]) => void>> = {
+  transactions: new Set(),
+  rules: new Set(),
+  budgets: new Set(),
+};
+
+function load(): Promise<State> {
+  if (state) return Promise.resolve(state);
+  if (!loading) {
+    loading = (async () => {
+      const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(PREFIX));
+      const pairs = keys.length ? await AsyncStorage.multiGet(keys) : [];
+      const s: State = { transactions: new Map(), rules: [], budgets: [] };
+      for (const [key, value] of pairs) {
+        if (!value) continue;
+        const data = JSON.parse(value);
+        if (key.startsWith(TX_PREFIX)) for (const t of data as Transaction[]) s.transactions.set(t.id, t);
+        else if (key === RULES_KEY) s.rules = data;
+        else if (key === BUDGETS_KEY) s.budgets = data;
+      }
+      state = s;
+      return s;
+    })();
+    loading.catch(() => {
+      loading = null;
+    });
+  }
+  return loading;
+}
+
+function snapshot(s: State, name: CollectionName): unknown[] {
+  if (name === 'transactions') return [...s.transactions.values()];
+  return name === 'rules' ? [...s.rules] : [...s.budgets];
+}
+
+function emit(s: State, name: CollectionName) {
+  const items = snapshot(s, name);
+  listeners[name].forEach((l) => l(items));
+}
+
+// Az írásokat sorba rendezzük, hogy két egyidejű mentés ne írja felül egymást.
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn);
+  queue = next.catch(() => undefined);
+  return next;
+}
+
+async function persistMonths(s: State, months: Set<string>) {
+  const byMonth = new Map<string, Transaction[]>([...months].map((m) => [m, []]));
+  for (const t of s.transactions.values()) byMonth.get(t.date.slice(0, 7))?.push(t);
+  const sets: [string, string][] = [];
+  const removes: string[] = [];
+  for (const [m, list] of byMonth) {
+    if (list.length) sets.push([`${TX_PREFIX}${m}`, JSON.stringify(list)]);
+    else removes.push(`${TX_PREFIX}${m}`);
+  }
+  if (sets.length) await AsyncStorage.multiSet(sets);
+  if (removes.length) await AsyncStorage.multiRemove(removes);
+}
 
 export function subscribe<T>(
-  uid: string,
   name: CollectionName,
   onData: (items: T[]) => void,
   onError: (e: Error) => void,
 ): () => void {
-  return onSnapshot(
-    col(uid, name),
-    (snap) => onData(snap.docs.map((d) => ({ ...(d.data() as DocumentData), id: d.id }) as T)),
-    onError,
+  const listener = onData as (items: unknown[]) => void;
+  listeners[name].add(listener);
+  load().then(
+    (s) => {
+      if (listeners[name].has(listener)) listener(snapshot(s, name));
+    },
+    (e: Error) => onError(e),
   );
+  return () => {
+    listeners[name].delete(listener);
+  };
 }
 
-/** Firestore egy batch-ben legfeljebb 500 írást enged; 400-asával írunk. */
-export async function saveTransactions(uid: string, txs: Transaction[]): Promise<void> {
-  const database = requireDb();
-  for (let i = 0; i < txs.length; i += 400) {
-    const batch = writeBatch(database);
-    for (const t of txs.slice(i, i + 400)) {
-      const { id, ...data } = t;
-      batch.set(doc(database, 'users', uid, 'transactions', id), data);
+export function saveTransactions(txs: Transaction[]): Promise<void> {
+  return serial(async () => {
+    if (txs.length === 0) return;
+    const s = await load();
+    const months = new Set<string>();
+    for (const t of txs) {
+      const old = s.transactions.get(t.id);
+      if (old) months.add(old.date.slice(0, 7));
+      s.transactions.set(t.id, t);
+      months.add(t.date.slice(0, 7));
     }
-    await batch.commit();
-  }
+    await persistMonths(s, months);
+    emit(s, 'transactions');
+  });
 }
 
-export async function updateCategories(
-  uid: string,
+export function updateCategories(
   updates: Pick<Transaction, 'id' | 'categoryId' | 'categorySource' | 'ruleId'>[],
 ): Promise<void> {
-  const database = requireDb();
-  for (let i = 0; i < updates.length; i += 400) {
-    const batch = writeBatch(database);
-    for (const u of updates.slice(i, i + 400)) {
-      batch.update(doc(database, 'users', uid, 'transactions', u.id), {
-        categoryId: u.categoryId,
-        categorySource: u.categorySource,
-        ruleId: u.ruleId ?? null,
-      });
+  return serial(async () => {
+    if (updates.length === 0) return;
+    const s = await load();
+    const months = new Set<string>();
+    for (const u of updates) {
+      const t = s.transactions.get(u.id);
+      if (!t) continue;
+      s.transactions.set(u.id, { ...t, categoryId: u.categoryId, categorySource: u.categorySource, ruleId: u.ruleId });
+      months.add(t.date.slice(0, 7));
     }
-    await batch.commit();
-  }
+    await persistMonths(s, months);
+    emit(s, 'transactions');
+  });
 }
 
-export async function deleteTransaction(uid: string, id: string): Promise<void> {
-  await deleteDoc(doc(requireDb(), 'users', uid, 'transactions', id));
+export function deleteTransaction(id: string): Promise<void> {
+  return serial(async () => {
+    const s = await load();
+    const t = s.transactions.get(id);
+    if (!t) return;
+    s.transactions.delete(id);
+    await persistMonths(s, new Set([t.date.slice(0, 7)]));
+    emit(s, 'transactions');
+  });
 }
 
-export async function saveRule(uid: string, rule: Rule): Promise<void> {
-  const { id, ...data } = rule;
-  await setDoc(doc(requireDb(), 'users', uid, 'rules', id), data);
+export function saveRule(rule: Rule): Promise<void> {
+  return serial(async () => {
+    const s = await load();
+    s.rules = [...s.rules.filter((r) => r.id !== rule.id), rule];
+    await AsyncStorage.setItem(RULES_KEY, JSON.stringify(s.rules));
+    emit(s, 'rules');
+  });
 }
 
-export async function deleteRule(uid: string, id: string): Promise<void> {
-  await deleteDoc(doc(requireDb(), 'users', uid, 'rules', id));
+export function deleteRule(id: string): Promise<void> {
+  return serial(async () => {
+    const s = await load();
+    s.rules = s.rules.filter((r) => r.id !== id);
+    await AsyncStorage.setItem(RULES_KEY, JSON.stringify(s.rules));
+    emit(s, 'rules');
+  });
 }
 
-export async function saveBudget(uid: string, budget: Budget): Promise<void> {
-  await setDoc(doc(requireDb(), 'users', uid, 'budgets', budget.categoryId), budget);
+export function saveBudget(budget: Budget): Promise<void> {
+  return serial(async () => {
+    const s = await load();
+    s.budgets = [...s.budgets.filter((b) => b.categoryId !== budget.categoryId), budget];
+    await AsyncStorage.setItem(BUDGETS_KEY, JSON.stringify(s.budgets));
+    emit(s, 'budgets');
+  });
 }
 
-export async function deleteBudget(uid: string, categoryId: string): Promise<void> {
-  await deleteDoc(doc(requireDb(), 'users', uid, 'budgets', categoryId));
+export function deleteBudget(categoryId: string): Promise<void> {
+  return serial(async () => {
+    const s = await load();
+    s.budgets = s.budgets.filter((b) => b.categoryId !== categoryId);
+    await AsyncStorage.setItem(BUDGETS_KEY, JSON.stringify(s.budgets));
+    emit(s, 'budgets');
+  });
+}
+
+/** Minden adat törlése a telefonról. */
+export function clearAll(): Promise<void> {
+  return serial(async () => {
+    const s = await load();
+    const keys = (await AsyncStorage.getAllKeys()).filter((k) => k.startsWith(PREFIX));
+    if (keys.length) await AsyncStorage.multiRemove(keys);
+    s.transactions.clear();
+    s.rules = [];
+    s.budgets = [];
+    (['transactions', 'rules', 'budgets'] as const).forEach((n) => emit(s, n));
+  });
 }

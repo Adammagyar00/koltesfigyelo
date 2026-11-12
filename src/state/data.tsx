@@ -31,38 +31,38 @@ interface DataState {
   removeRule(id: string): Promise<number>;
   setBudget(categoryId: string, monthlyLimit: number | null): Promise<void>;
   removeTransaction(id: string): Promise<void>;
+  /** Minden adat törlése a telefonról. */
+  clearAll(): Promise<void>;
 }
 
 const DataContext = createContext<DataState | null>(null);
 
-export function DataProvider({ uid, children }: { uid: string | null; children: ReactNode }) {
+export function DataProvider({ children }: { children: ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [userRules, setUserRules] = useState<Rule[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [loaded, setLoaded] = useState({ tx: false, rules: false, budgets: false });
   const [error, setError] = useState<string | null>(null);
 
-  // Felhasználóváltáskor a szülő új `key`-jel csatolja újra a providert, így az állapot tisztán indul.
   useEffect(() => {
-    if (!uid) return;
     const onError = (e: Error) => setError(e.message);
     const unsubs = [
-      store.subscribe<Transaction>(uid, 'transactions', (items) => {
+      store.subscribe<Transaction>('transactions', (items) => {
         items.sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
         setTransactions(items);
         setLoaded((l) => ({ ...l, tx: true }));
       }, onError),
-      store.subscribe<Rule>(uid, 'rules', (items) => {
+      store.subscribe<Rule>('rules', (items) => {
         setUserRules(items);
         setLoaded((l) => ({ ...l, rules: true }));
       }, onError),
-      store.subscribe<Budget>(uid, 'budgets', (items) => {
+      store.subscribe<Budget>('budgets', (items) => {
         setBudgets(items);
         setLoaded((l) => ({ ...l, budgets: true }));
       }, onError),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [uid]);
+  }, []);
 
   const rules = useMemo(() => sortRules([...userRules, ...defaultRules()]), [userRules]);
   const existingIds = useMemo(() => new Set(transactions.map((t) => t.id)), [transactions]);
@@ -78,13 +78,8 @@ export function DataProvider({ uid, children }: { uid: string | null; children: 
     [rules, existingIds],
   );
 
-  const requireUid = () => {
-    if (!uid) throw new Error('Nincs bejelentkezett felhasználó.');
-    return uid;
-  };
-
   const value: DataState = {
-    loading: Boolean(uid) && !(loaded.tx && loaded.rules && loaded.budgets),
+    loading: !(loaded.tx && loaded.rules && loaded.budgets),
     error,
     transactions,
     userRules,
@@ -93,17 +88,15 @@ export function DataProvider({ uid, children }: { uid: string | null; children: 
     preview,
 
     async importTransactions(parsed) {
-      const u = requireUid();
       const rows = preview(parsed);
       // A már meglévő tételeket nem írjuk felül, hogy a kézi besorolások megmaradjanak.
       const fresh = rows.filter((r) => !r.duplicate).map((r) => r.tx);
-      await store.saveTransactions(u, fresh);
+      await store.saveTransactions(fresh);
       return { added: fresh.length, duplicates: rows.length - fresh.length };
     },
 
     async setCategory(tx, categoryId, rulePattern) {
-      const u = requireUid();
-      await store.updateCategories(u, [{ id: tx.id, categoryId, categorySource: 'user', ruleId: undefined }]);
+      await store.updateCategories([{ id: tx.id, categoryId, categorySource: 'user', ruleId: undefined }]);
       const pattern = rulePattern ? normalize(rulePattern) : '';
       if (!pattern) return 0;
       const rule: Rule = {
@@ -115,31 +108,31 @@ export function DataProvider({ uid, children }: { uid: string | null; children: 
       };
       // Ha ugyanerre a mintára már volt szabály, azt lecseréljük.
       const old = userRules.find((r) => r.pattern === pattern);
-      if (old) await store.deleteRule(u, old.id);
-      await store.saveRule(u, rule);
+      if (old) await store.deleteRule(old.id);
+      await store.saveRule(rule);
       const others = transactions.filter((t) => t.id !== tx.id);
       const changed = recategorize(others, [...userRules.filter((r) => r.id !== old?.id), rule, ...defaultRules()]);
-      await store.updateCategories(u, changed);
+      await store.updateCategories(changed);
       return changed.length;
     },
 
     async removeRule(id) {
-      const u = requireUid();
-      await store.deleteRule(u, id);
+      await store.deleteRule(id);
       const changed = recategorize(transactions, [...userRules.filter((r) => r.id !== id), ...defaultRules()]);
-      await store.updateCategories(u, changed);
+      await store.updateCategories(changed);
       return changed.length;
     },
 
     async setBudget(categoryId, monthlyLimit) {
-      const u = requireUid();
-      if (!monthlyLimit || monthlyLimit <= 0) await store.deleteBudget(u, categoryId);
-      else await store.saveBudget(u, { categoryId, monthlyLimit });
+      if (!monthlyLimit || monthlyLimit <= 0) await store.deleteBudget(categoryId);
+      else await store.saveBudget({ categoryId, monthlyLimit });
     },
 
     async removeTransaction(id) {
-      await store.deleteTransaction(requireUid(), id);
+      await store.deleteTransaction(id);
     },
+
+    clearAll: store.clearAll,
   };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

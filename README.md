@@ -1,6 +1,6 @@
 # Költésfigyelő
 
-Telefonos app (iOS, Android, web), ami a bankszámlakivonatod alapján megmutatja, hova megy a pénzed, és konkrét, forintosított javaslatokat ad a spóroláshoz.
+Telefonos app (iOS és Android), ami a bankszámlakivonatod alapján megmutatja, hova megy a pénzed, és konkrét, forintosított javaslatokat ad a spóroláshoz.
 
 **Funkciók**
 
@@ -10,11 +10,11 @@ Telefonos app (iOS, Android, web), ami a bankszámlakivonatod alapján megmutatj
 - **Áttekintés:** havi kiadás és bevétel, kategóriánkénti bontás, 6 hónapos trend, összevetés az előző hónap azonos időszakával.
 - **Keretek:** havi limit kategóriánként, figyelmeztetés a költési tempó alapján („ezzel a tempóval hó végére X lesz”).
 - **Spórolás:** kiugró kategóriák, gyakori apró kiadások, rendszeres előfizetések felismerése (havi és éves költséggel), bankköltségek.
-- **Fiók és felhő:** Firebase Auth (e-mail és jelszó) és Firestore. Mindenki csak a saját adatait látja (`firestore.rules`).
+- **Adatvédelem:** minden adat csak a telefonon tárolódik, fiók és szerver nélkül.
 
 ## Technológia
 
-Expo (SDK 58) · React Native · TypeScript · Expo Router · Firebase (Auth + Firestore) · Vitest
+Expo (SDK 58) · React Native · TypeScript · Expo Router · AsyncStorage · Vitest
 
 ```
 src/
@@ -24,8 +24,8 @@ src/
     csv/          kivonat-feldolgozás (oszlopfelismerés, szám- és dátumformátumok)
     categorize.ts szabályalapú besorolás
     insights.ts   összesítések, keretek, előfizetések, tippek
-  services/       Firebase-kapcsolat és adatműveletek
-  state/          React context (bejelentkezés, adatok)
+  services/       helyi adattárolás (AsyncStorage)
+  state/          React context (adatok)
 sample-data/      kitalált minta-kivonat teszteléshez
 ```
 
@@ -33,42 +33,16 @@ sample-data/      kitalált minta-kivonat teszteléshez
 
 ```bash
 npm install
-cp .env.example .env   # majd töltsd ki (lásd lent)
 npx expo start
 ```
 
-Telefonon az **Expo Go** appal olvasd be a QR-kódot, vagy nyomd meg a `w` gombot a webes nézethez.
+Telefonra telepítsd az **Expo Go** appot (App Store / Google Play), és olvasd be vele a terminálban megjelenő QR-kódot. A telefonnak és a gépnek ugyanazon a Wi-Fi-hálózaton kell lennie. Ha nem jelenik meg az app, indítsd így: `npx expo start --tunnel`.
 
-## Firebase beállítása
+Kipróbáláshoz a `sample-data/erste-minta.csv` kitalált mintakivonat használható (pl. küldd át magadnak e-mailben, és a telefonon onnan válaszd ki).
 
-1. A [Firebase-konzolban](https://console.firebase.google.com) hozz létre egy projektet.
-2. **Authentication → Sign-in method:** kapcsold be az **Email/Password** módot.
-3. **Firestore Database:** hozd létre az adatbázist (production mode, `eur3` régió).
-4. **Project settings → Your apps:** adj hozzá egy **Web appot**, és a kapott konfigurációt másold a `.env` fájlba.
-5. Töltsd fel a biztonsági szabályokat:
-   ```bash
-   npx firebase-tools login
-   npx firebase-tools deploy --only firestore:rules --project <projekt-azonosító>
-   ```
+## Adattárolás
 
-A `.env` nincs a repóban. Az `EXPO_PUBLIC_` értékek nem titkos kulcsok, beépülnek az appba. Az adatokat a `firestore.rules` védi.
-
-### Helyi fejlesztés emulátorral (fiók nélkül)
-
-```bash
-npx firebase-tools emulators:start --only auth,firestore --project demo-koltesfigyelo
-```
-
-A `.env`-be ekkor elég ennyi:
-
-```
-EXPO_PUBLIC_FIREBASE_API_KEY=demo-key
-EXPO_PUBLIC_FIREBASE_PROJECT_ID=demo-koltesfigyelo
-EXPO_PUBLIC_FIREBASE_APP_ID=1:000000000000:web:demo
-EXPO_PUBLIC_FIREBASE_EMULATOR_HOST=127.0.0.1
-```
-
-Telefonról a gép helyi IP-címét add meg `127.0.0.1` helyett.
+Minden adat **csak a telefonon** van (AsyncStorage), nincs fiók és nincs szerver. A tételek havonta külön kulcsban tárolódnak (`src/services/data.ts`). Az app törlésével az adatok is törlődnek; a kivonatok bármikor újraimportálhatók. Felhős szinkron később hozzáadható ugyanebbe a rétegbe.
 
 ## Ellenőrzések
 
@@ -92,3 +66,4 @@ A Wise két formátumát ismeri: a klasszikus kivonatot (*TransferWise ID, Date,
 - AI-alapú besorolás a szabályok mellé
 - Saját kategóriák
 - Több pénznem összesítése árfolyammal
+- Felhős mentés / szinkron több eszköz között

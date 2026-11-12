@@ -1,18 +1,26 @@
 import { useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Alert, Platform, Pressable, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button, Card, Screen, SectionTitle } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getCategory } from '@/lib/categories';
-import { useAuth } from '@/state/auth';
 import { useData } from '@/state/data';
+
+function confirm(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+  return new Promise((resolve) =>
+    Alert.alert(title, message, [
+      { text: 'Mégse', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Törlés', style: 'destructive', onPress: () => resolve(true) },
+    ]),
+  );
+}
 
 export default function SettingsScreen() {
   const theme = useTheme();
-  const { user, signOut } = useAuth();
-  const { userRules, transactions, removeRule } = useData();
+  const { userRules, transactions, budgets, removeRule, clearAll } = useData();
   const [message, setMessage] = useState<string | null>(null);
 
   const rules = [...userRules].sort((a, b) => a.pattern.localeCompare(b.pattern));
@@ -22,15 +30,27 @@ export default function SettingsScreen() {
     setMessage(n > 0 ? `Szabály törölve, ${n} tétel újra lett sorolva.` : 'Szabály törölve.');
   };
 
+  const wipe = async () => {
+    const ok = await confirm(
+      'Minden adat törlése',
+      `${transactions.length} tétel, ${userRules.length} szabály és ${budgets.length} keret törlődik a telefonról. Ez nem vonható vissza.`,
+    );
+    if (!ok) return;
+    await clearAll();
+    setMessage('Minden adat törölve.');
+  };
+
   return (
     <Screen tabs={false}>
-      <SectionTitle>Fiók</SectionTitle>
+      <SectionTitle>Adatok</SectionTitle>
       <Card>
-        <ThemedText>{user?.email}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {transactions.length} tétel · {userRules.length} saját szabály
+        <ThemedText>
+          {transactions.length} tétel · {userRules.length} saját szabály · {budgets.length} keret
         </ThemedText>
-        <Button variant="secondary" title="Kijelentkezés" onPress={signOut} />
+        <ThemedText type="small" themeColor="textSecondary">
+          Minden adat csak ezen a telefonon van tárolva, nem kerül fel semmilyen szerverre. Ha törlöd az appot, az
+          adatok is törlődnek; a kivonatokat bármikor újra beimportálhatod.
+        </ThemedText>
       </Card>
 
       <SectionTitle>Saját szabályok</SectionTitle>
@@ -60,9 +80,7 @@ export default function SettingsScreen() {
         )}
       </Card>
 
-      <ThemedText type="small" themeColor="textSecondary">
-        Az adataid a saját Firebase-fiókodban vannak, és csak te látod őket.
-      </ThemedText>
+      <Button variant="danger" title="Minden adat törlése" onPress={wipe} style={{ marginTop: Spacing.four }} />
     </Screen>
   );
 }
