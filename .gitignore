@@ -45,3 +45,6 @@ example
 
 # Firebase emulator logs
 *-debug.log
+
+# Android builds
+*.apk
