@@ -5,7 +5,7 @@ import { Button, Card } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
 import { checkForUpdate, downloadAndInstall, updatesSupported, type UpdateInfo } from '@/services/updates';
 
-// Egy app-futás alatt egyszer kérdezzük le automatikusan (a GitHub óránként 60 kérést enged).
+// Egy app-futás alatt egyszer kérdezzük le automatikusan.
 let cached: Promise<UpdateInfo | null> | null = null;
 
 export function useUpdate() {
@@ -57,7 +57,7 @@ export function UpdateBanner() {
   }, [check]);
 
   if (!update) return null;
-  const mb = (update.sizeBytes / 1024 / 1024).toFixed(0);
+  const mb = update.sizeBytes ? ` (${(update.sizeBytes / 1024 / 1024).toFixed(0)} MB)` : '';
   return (
     <Card style={{ borderColor: theme.tint, borderWidth: 1 }}>
       <ThemedText style={{ fontWeight: '700' }}>🎉 Új verzió érhető el: {update.version}</ThemedText>
@@ -67,7 +67,7 @@ export function UpdateBanner() {
         </ThemedText>
       ) : null}
       {error ? <ThemedText style={{ color: theme.danger }}>{error}</ThemedText> : null}
-      <Button title={installing ? 'Letöltés…' : `Frissítés (${mb} MB)`} onPress={install} loading={installing} />
+      <Button title={installing ? 'Letöltés…' : `Frissítés${mb}`} onPress={install} loading={installing} />
       <ThemedText type="small" themeColor="textSecondary">
         Letöltés után az Android megkérdezi, telepítse-e: válaszd a „Telepítés” gombot. Az adataid megmaradnak.
       </ThemedText>

@@ -6,12 +6,12 @@ import { Platform } from 'react-native';
 import { compareVersions } from '@/lib/version';
 
 /**
- * Frissítés GitHub Releases-ből (a Play Áruház nélkül telepített apphoz).
- * Az új verzió APK-ja a repó legutóbbi kiadásához van csatolva; az app letölti,
- * majd megnyitja az Android telepítőjét (a "Telepítés" gombot az Android mindig jóváhagyatja).
+ * Frissítés a GitHub-repó `releases` ágáról (a Play Áruház nélkül telepített apphoz).
+ * Az ágon mindig csak a legutolsó verzió van: `latest.json` (verzió, leírás, fájlnév) és maga az APK.
+ * Az app letölti az APK-t, majd megnyitja az Android telepítőjét
+ * (a "Telepítés" gombot az Android mindig jóváhagyatja).
  */
-const REPO = 'Adammagyar00/koltesfigyelo';
-const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+const BASE = 'https://raw.githubusercontent.com/Adammagyar00/koltesfigyelo/releases';
 
 export interface UpdateInfo {
   version: string;
@@ -24,30 +24,27 @@ export const currentVersion = Application.nativeApplicationVersion ?? '0.0.0';
 
 export const updatesSupported = Platform.OS === 'android';
 
-interface GithubRelease {
-  tag_name: string;
-  body?: string | null;
-  draft?: boolean;
-  prerelease?: boolean;
-  assets: { name: string; browser_download_url: string; size: number }[];
+interface LatestManifest {
+  version: string;
+  notes?: string;
+  apk: string;
+  size?: number;
 }
 
 /** Null, ha nincs újabb verzió. Hálózati hibánál kivételt dob. */
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
   if (!updatesSupported) return null;
-  const res = await fetch(LATEST_URL, { headers: { Accept: 'application/vnd.github+json' } });
+  // Időbélyeg a címben, hogy ne egy gyorsítótárazott régi választ kapjunk.
+  const res = await fetch(`${BASE}/latest.json?t=${Date.now()}`, { headers: { 'Cache-Control': 'no-cache' } });
   if (res.status === 404) return null; // még nincs kiadás, vagy a repó nem nyilvános
   if (!res.ok) throw new Error(`GitHub: ${res.status}`);
-  const rel = (await res.json()) as GithubRelease;
-  if (rel.draft || rel.prerelease) return null;
-  if (compareVersions(rel.tag_name, currentVersion) <= 0) return null;
-  const apk = rel.assets.find((a) => a.name.toLowerCase().endsWith('.apk'));
-  if (!apk) return null;
+  const m = (await res.json()) as LatestManifest;
+  if (!m.version || !m.apk || compareVersions(m.version, currentVersion) <= 0) return null;
   return {
-    version: rel.tag_name.replace(/^v/i, ''),
-    notes: (rel.body ?? '').trim(),
-    apkUrl: apk.browser_download_url,
-    sizeBytes: apk.size,
+    version: m.version,
+    notes: (m.notes ?? '').trim(),
+    apkUrl: `${BASE}/${encodeURIComponent(m.apk)}`,
+    sizeBytes: m.size ?? 0,
   };
 }
 

@@ -1,17 +1,25 @@
 #!/bin/bash
-# Android APK kiadása GitHub Releasesbe – innen frissít az app ("Frissítés" gomb).
+# Android APK kiadása a repó `releases` ágára – innen frissít az app ("Frissítés" gomb).
+# Az ágon mindig csak a legutolsó verzió van (az előzményt felülírjuk), így a repó nem hízik.
 # Használat: scripts/release-android.sh path/to/app-release.apk "Mi változott"
-# A verziót az app.json "expo.version" mezőjéből veszi (tag: v<verzió>).
+# A verziót az app.json "expo.version" mezőjéből veszi.
 set -euo pipefail
-APK="$1"
+APK="$(realpath "$1")"
 NOTES="${2:-}"
-REPO="Adammagyar00/koltesfigyelo"
-VERSION=$(node -p "require('./app.json').expo.version")
-TAG="v$VERSION"
+ROOT="$(git rev-parse --show-toplevel)"
+VERSION=$(node -p "require('$ROOT/app.json').expo.version")
 NAME="Koltesfigyelo-$VERSION.apk"
+SIZE=$(stat -c %s "$APK")
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-echo "Kiadás: $TAG ($APK)"
-RELEASE_ID=$(gh api "repos/$REPO/releases" -f tag_name="$TAG" -f target_commitish="$(git rev-parse HEAD)" \
-  -f name="Költésfigyelő $VERSION" -f body="$NOTES" --jq .id)
-gh api -X POST "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=$NAME" \
-  -H "Content-Type: application/vnd.android.package-archive" --input "$APK" --jq .browser_download_url
+cd "$TMP"
+git init -q -b releases
+cp "$APK" "$NAME"
+node -e 'const [v,n,a,s]=process.argv.slice(1); require("fs").writeFileSync("latest.json", JSON.stringify({version:v, notes:n, apk:a, size:Number(s)}, null, 2)+"\n")' \
+  "$VERSION" "$NOTES" "$NAME" "$SIZE"
+printf '# Költésfigyelő – kiadások\n\nLegutolsó verzió: **%s** – [%s](%s)\n' "$VERSION" "$NAME" "$NAME" > README.md
+git add -A
+git -c user.name="Claude" -c user.email="noreply@anthropic.com" commit -qm "Release $VERSION"
+git push -f "$(git -C "$ROOT" remote get-url origin)" releases:releases
+echo "Kiadva: $VERSION"
