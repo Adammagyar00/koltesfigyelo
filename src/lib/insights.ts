@@ -20,7 +20,6 @@ export function daysInMonth(month: MonthKey): number {
 }
 
 const isExpense = (t: Transaction) => t.amount < 0 && getCategory(t.categoryId).kind === 'expense';
-const isIncome = (t: Transaction) => t.amount > 0 && getCategory(t.categoryId).kind === 'income';
 
 export interface CategoryTotal {
   categoryId: string;
@@ -42,13 +41,20 @@ export interface MonthSummary {
  * Az "Átvezetés" kategória (saját számlák között) nem számít se kiadásnak, se bevételnek.
  * A kiadási kategóriába sorolt jóváírás (pl. visszatérítés) csökkenti az adott kategória költését.
  */
-export function summarizeMonth(txs: Transaction[], month: MonthKey, currency = 'HUF'): MonthSummary {
+export function summarizeMonth(
+  txs: Transaction[],
+  month: MonthKey,
+  currency = 'HUF',
+  /** Ha meg van adva, csak a hónap 1..untilDay napjait számolja (azonos időszak összevetéséhez). */
+  untilDay?: number,
+): MonthSummary {
   const map = new Map<string, CategoryTotal>();
   let spent = 0;
   let income = 0;
   let otherCurrencyCount = 0;
   for (const t of txs) {
     if (monthOf(t.date) !== month) continue;
+    if (untilDay !== undefined && Number(t.date.slice(8, 10)) > untilDay) continue;
     if (t.currency !== currency) {
       otherCurrencyCount++;
       continue;
@@ -186,7 +192,11 @@ export interface SavingTip {
   monthlySaving?: number;
 }
 
-const DISCRETIONARY = new Set(['etterem', 'vasarlas', 'szorakozas', 'elofizetes', 'egyeb', 'utazas']);
+/**
+ * Változó, csökkenthető kategóriák. Csak ezeknél van értelme a hó közbeni tempóból vetíteni;
+ * a havonta egyszer esedékes tételeket (előfizetés, rezsi, lakbér) nem vetítjük fel.
+ */
+const VARIABLE = new Set(['etterem', 'vasarlas', 'szorakozas', 'egyeb', 'haztartas']);
 
 /**
  * Spórolási tippek az adott hónap és az előző 3 hónap alapján.
@@ -212,7 +222,7 @@ export function savingTips(
   // 1) Kategóriák, amik jelentősen meghaladják az előző hónapok átlagát.
   if (prevWithData.length >= 2) {
     for (const c of cur.byCategory) {
-      if (!DISCRETIONARY.has(c.categoryId) && c.categoryId !== 'haztartas') continue;
+      if (!VARIABLE.has(c.categoryId)) continue;
       const avg =
         prevWithData.reduce((s, p) => s + (p.byCategory.find((x) => x.categoryId === c.categoryId)?.total ?? 0), 0) /
         prevWithData.length;
@@ -234,12 +244,16 @@ export function savingTips(
   }
 
   // 2) Gyakori apró kiadások (kávé, ételrendelés): "ha a felére csökkented".
+  // Ha ugyanerre a kategóriára már van "kiugrás" tipp, ahhoz fűzzük hozzá, hogy ne számoljuk kétszer.
   const eating = cur.byCategory.find((c) => c.categoryId === 'etterem');
   if (eating && eating.count >= 8) {
     const perItem = eating.total / eating.count;
     const monthlyCount = Math.round(scale(eating.count));
     const saving = (monthlyCount / 2) * perItem;
-    tips.push({
+    const spike = tips.find((t) => t.id === 'spike:etterem');
+    if (spike) {
+      spike.body += ` ${monthlyCount} alkalom, átlagosan ${fmt(perItem)}.`;
+    } else tips.push({
       id: 'frequent:etterem',
       icon: '☕',
       title: `${monthlyCount} alkalom étteremben, kávézóban vagy rendelésnél`,

@@ -87,22 +87,40 @@ describe('detectRecurring', () => {
 });
 
 describe('savingTips', () => {
-  it('flags a category spike and frequent eating out', () => {
+  it('flags a category spike and mentions the frequency', () => {
     const txs: Transaction[] = [];
     for (const m of ['2024-01', '2024-02', '2024-03']) {
       txs.push(t(`${m}-10`, -20000, 'etterem', 'WOLT'), t(`${m}-11`, -60000, 'elelmiszer', 'LIDL'));
     }
     for (let d = 1; d <= 12; d++) txs.push(t(`2024-04-${String(d).padStart(2, '0')}`, -3500, 'etterem', 'WOLT'));
     const tips = savingTips(txs, '2024-04', '2024-04-30');
-    const ids = tips.map((x) => x.id);
-    expect(ids).toContain('spike:etterem');
-    expect(ids).toContain('frequent:etterem');
-    const freq = tips.find((x) => x.id === 'frequent:etterem')!;
-    expect(freq.monthlySaving).toBe(21000);
+    const spike = tips.find((x) => x.id === 'spike:etterem')!;
+    expect(spike.monthlySaving).toBe(42000 - 20000);
+    expect(spike.body).toContain('12 alkalom');
   });
 
   it('is quiet when spending is normal', () => {
     const txs = ['2024-01', '2024-02', '2024-03', '2024-04'].map((m) => t(`${m}-10`, -20000, 'elelmiszer', 'LIDL'));
     expect(savingTips(txs, '2024-04', '2024-04-30')).toEqual([]);
+  });
+});
+
+describe('savingTips – edge cases', () => {
+  it('does not extrapolate fixed monthly charges early in the month', () => {
+    const txs: Transaction[] = [];
+    for (const m of ['2024-01', '2024-02', '2024-03', '2024-04']) {
+      txs.push(t(`${m}-05`, -4490, 'elofizetes', 'NETFLIX'), t(`${m}-07`, -2390, 'elofizetes', 'SPOTIFY'));
+    }
+    const ids = savingTips(txs, '2024-04', '2024-04-12').map((x) => x.id);
+    expect(ids.some((id) => id.startsWith('spike:elofizetes'))).toBe(false);
+  });
+
+  it('does not double count a spike and frequent eating out', () => {
+    const txs: Transaction[] = [];
+    for (const m of ['2024-01', '2024-02', '2024-03']) txs.push(t(`${m}-10`, -20000, 'etterem', 'WOLT'));
+    for (let d = 1; d <= 12; d++) txs.push(t(`2024-04-${String(d).padStart(2, '0')}`, -3500, 'etterem', 'WOLT'));
+    const tips = savingTips(txs, '2024-04', '2024-04-30').filter((x) => x.id.endsWith('etterem'));
+    expect(tips).toHaveLength(1);
+    expect(tips[0].id).toBe('spike:etterem');
   });
 });

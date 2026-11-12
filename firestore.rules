@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// Minden felhasználó kizárólag a saját users/{uid} alatti adatait olvashatja és írhatja.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{collection}/{docId} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && collection in ['transactions', 'rules', 'budgets']
+        && validDoc(collection, request.resource.data);
+    }
+
+    // Minden más tiltott.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+
+  function validDoc(collection, d) {
+    return (collection == 'transactions'
+        && d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && d.amount is number
+        && d.currency is string && d.currency.size() <= 5
+        && d.categoryId is string
+        && d.categorySource in ['rule', 'user', 'default'])
+      || (collection == 'rules'
+        && d.pattern is string && d.pattern.size() > 0 && d.pattern.size() <= 80
+        && d.categoryId is string
+        && d.source == 'user')
+      || (collection == 'budgets'
+        && d.categoryId is string
+        && d.monthlyLimit is number && d.monthlyLimit > 0);
+  }
+}

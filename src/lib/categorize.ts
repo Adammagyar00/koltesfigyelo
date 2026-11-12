@@ -49,7 +49,9 @@ export function recategorize(transactions: Transaction[], rules: Rule[]): Transa
   for (const tx of transactions) {
     if (tx.categorySource === 'user') continue;
     const a = categorize(tx, sorted);
-    if (a.categoryId !== tx.categoryId || a.ruleId !== tx.ruleId || a.categorySource !== tx.categorySource) {
+    // A Firestore a hiányzó ruleId-t null-ként adja vissza – ezt azonosnak vesszük az undefined-dal.
+    const ruleChanged = (a.ruleId ?? null) !== (tx.ruleId ?? null);
+    if (a.categoryId !== tx.categoryId || ruleChanged || a.categorySource !== tx.categorySource) {
       changed.push({ ...tx, ...a });
     }
   }
