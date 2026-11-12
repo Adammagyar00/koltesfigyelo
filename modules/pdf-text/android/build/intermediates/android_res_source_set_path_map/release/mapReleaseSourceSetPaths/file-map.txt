@@ -1,9 +1,0 @@
-hu.koltesfigyelo.pdftext.pdf-text-pngs-0 /home/user/koltes-figyelo/modules/pdf-text/android/build/generated/res/pngs/release
-hu.koltesfigyelo.pdftext.pdf-text-updated_navigation_xml-1 /home/user/koltes-figyelo/modules/pdf-text/android/build/generated/updated_navigation_xml/release
-hu.koltesfigyelo.pdftext.pdf-text-mergeReleaseResources-2 /home/user/koltes-figyelo/modules/pdf-text/android/build/intermediates/incremental/release/mergeReleaseResources/merged.dir
-hu.koltesfigyelo.pdftext.pdf-text-mergeReleaseResources-3 /home/user/koltes-figyelo/modules/pdf-text/android/build/intermediates/incremental/release/mergeReleaseResources/stripped.dir
-hu.koltesfigyelo.pdftext.pdf-text-release-4 /home/user/koltes-figyelo/modules/pdf-text/android/build/intermediates/merged_res/release/mergeReleaseResources
-hu.koltesfigyelo.pdftext.pdf-text-release-5 /home/user/koltes-figyelo/modules/pdf-text/android/build/intermediates/packaged_res/release/packageReleaseResources
-hu.koltesfigyelo.pdftext.pdf-text-main-6 /home/user/koltes-figyelo/modules/pdf-text/android/src/main/res
-hu.koltesfigyelo.pdftext.pdf-text-release-7 /home/user/koltes-figyelo/modules/pdf-text/android/src/release/res
-gradleHome-0 /root/.gradle

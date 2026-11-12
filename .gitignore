@@ -48,3 +48,7 @@ example
 
 # Android builds
 *.apk
+
+# Native module build outputs
+modules/*/android/build/
+modules/*/android/.gradle/
