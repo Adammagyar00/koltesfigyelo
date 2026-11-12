@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { defaultRules } from '../categories';
 import { categorize, countMatches, recategorize, sortRules, suggestRulePattern } from '../categorize';
-import { containsToken, merchantKey, normalize } from '../text';
+import { containsToken, isGenericPattern, merchantKey, normalize, stripWalletPrefix } from '../text';
 import type { ParsedTransaction, Rule, Transaction } from '../types';
 
 const rules = sortRules(defaultRules());
@@ -95,5 +95,28 @@ describe('recategorize', () => {
 
   it('suggests a usable rule pattern', () => {
     expect(suggestRulePattern({ counterparty: 'KISBOLT ABC KFT', description: '' })).toBe('KISBOLT');
+  });
+});
+
+describe('payment wallet prefixes', () => {
+  it('suggests the merchant, not the wallet, as rule pattern', () => {
+    expect(suggestRulePattern({ counterparty: 'Google Pay LIDL HU 167 Bu', description: 'KÁRTYA HASZNÁLAT' })).toBe('LIDL');
+    expect(suggestRulePattern({ counterparty: 'PAYPAL *DAZN 35314369001', description: '' })).toBe('DAZN');
+    expect(suggestRulePattern({ counterparty: 'SIMPLEP*Budapes Budapest', description: '' })).toBe('BUDAPES');
+    expect(suggestRulePattern({ counterparty: 'Google Pay HM Hennes Mau', description: '' })).toBe('HM HENNES');
+  });
+
+  it('ignores too generic user rules such as "GOOGLE"', () => {
+    const bad: Rule = { id: 'u', pattern: 'GOOGLE', categoryId: 'szorakozas', source: 'user', createdAt: 1 };
+    const r = categorize(tx('Google Pay LIDL HU 167 Bu'), sortRules([...defaultRules(), bad]));
+    expect(r.categoryId).toBe('elelmiszer');
+    expect(isGenericPattern('Google Pay')).toBe(true);
+    expect(isGenericPattern('lidl')).toBe(false);
+  });
+
+  it('strips wallet prefixes for display', () => {
+    expect(stripWalletPrefix('Google Pay LIDL HU 167 Bu')).toBe('LIDL HU 167 Bu');
+    expect(stripWalletPrefix('PAYPAL *EA 4029357733')).toBe('EA 4029357733');
+    expect(stripWalletPrefix('UBER *TRIP HELP Amsterdam')).toBe('UBER *TRIP HELP Amsterdam');
   });
 });

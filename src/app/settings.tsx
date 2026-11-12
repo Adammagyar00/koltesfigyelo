@@ -7,6 +7,7 @@ import { Button, Card, Field, Screen, SectionTitle } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getCategory } from '@/lib/categories';
+import { isGenericPattern } from '@/lib/text';
 import { currentVersion, updatesSupported } from '@/services/updates';
 import { useData } from '@/state/data';
 
@@ -77,6 +78,11 @@ export default function SettingsScreen() {
                   <ThemedText type="small" themeColor="textSecondary">
                     → {c.icon} {c.name}
                   </ThemedText>
+                  {isGenericPattern(r.pattern) ? (
+                    <ThemedText type="small" style={{ color: theme.warning }}>
+                      Túl általános, ezért nem alkalmazzuk (minden kártyás vásárlásra illene). Töröld nyugodtan.
+                    </ThemedText>
+                  ) : null}
                 </View>
                 <Pressable onPress={() => remove(r.id)} hitSlop={8} accessibilityLabel={`${r.pattern} szabály törlése`}>
                   <ThemedText style={{ color: theme.danger, fontWeight: '600' }}>Törlés</ThemedText>

@@ -1,6 +1,6 @@
 import { FALLBACK_EXPENSE, FALLBACK_INCOME, getCategory } from './categories';
 import { EMPTY_PROFILE, findTransferPairs, matchOwnTransfer, TRANSFER_CATEGORY, type OwnProfile } from './own-transfers';
-import { containsToken, merchantKey, normalize } from './text';
+import { containsToken, isGenericPattern, merchantKey, normalize } from './text';
 import type { CategorySource, ParsedTransaction, Rule, Transaction } from './types';
 
 export interface CategoryAssignment {
@@ -41,6 +41,8 @@ export function categorize(
   // nem bevétel.
   const cardRefund = tx.amount > 0 && /\bKARTYA HASZNALAT\b|\bVISSZATERITES\b|\bREFUND\b/.test(text);
   for (const rule of sortedRules) {
+    // A túl általános saját szabályokat (pl. "GOOGLE") nem alkalmazzuk: minden kártyás vásárlásra illenének.
+    if (rule.source === 'user' && isGenericPattern(rule.pattern)) continue;
     if (!containsToken(text, rule.pattern)) continue;
     const kind = getCategory(rule.categoryId).kind;
     // Egy kiadási kulcsszó ne sorolja kiadásnak a bejövő pénzt (pl. egy átutalást a Lidltől),

@@ -1,9 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { defaultRules } from '@/lib/categories';
 import { categorize, recategorize, sortRules } from '@/lib/categorize';
 import { cleanProfile, EMPTY_PROFILE, type OwnProfile } from '@/lib/own-transfers';
-import { normalize } from '@/lib/text';
+import { isGenericPattern, normalize } from '@/lib/text';
 import type { Budget, ParsedTransaction, Rule, Transaction } from '@/lib/types';
 import * as store from '@/services/data';
 
@@ -87,6 +87,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const rules = useMemo(() => sortRules([...userRules, ...defaultRules()]), [userRules]);
+  const ready = loaded.tx && loaded.rules && loaded.budgets && profileLoaded;
+
+  // Induláskor egyszer újrasorolunk mindent: így egy frissítés javított/új szabályai (és a túl általános
+  // saját szabályok kikapcsolása) a korábban importált tételekre is érvényesek lesznek.
+  // A kézzel besorolt tételekhez nem nyúl.
+  const recategorizedOnStart = useRef(false);
+  useEffect(() => {
+    if (!ready || recategorizedOnStart.current) return;
+    recategorizedOnStart.current = true;
+    const changed = recategorize(transactions, rules, profile);
+    if (changed.length) store.updateCategories(changed).catch((e: Error) => setError(e.message));
+  }, [ready, transactions, rules, profile]);
   const existingIds = useMemo(() => new Set(transactions.map((t) => t.id)), [transactions]);
 
   const preview = useCallback(
@@ -101,7 +113,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   );
 
   const value: DataState = {
-    loading: !(loaded.tx && loaded.rules && loaded.budgets && profileLoaded),
+    loading: !ready,
     error,
     transactions,
     userRules,
@@ -134,7 +146,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     async setCategory(tx, categoryId, rulePattern) {
       await store.updateCategories([{ id: tx.id, categoryId, categorySource: 'user', ruleId: undefined }]);
       const pattern = rulePattern ? normalize(rulePattern) : '';
-      if (!pattern) return 0;
+      if (!pattern || isGenericPattern(pattern)) return 0;
       const rule: Rule = {
         id: `user-${Date.now().toString(36)}`,
         pattern,

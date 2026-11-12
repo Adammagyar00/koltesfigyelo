@@ -9,6 +9,7 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { CATEGORIES, getCategory } from '@/lib/categories';
 import { countMatches, suggestRulePattern } from '@/lib/categorize';
+import { isGenericPattern } from '@/lib/text';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useData } from '@/state/data';
 
@@ -67,6 +68,7 @@ export default function TransactionScreen() {
   };
 
   const existingRule = userRules.find((r) => r.pattern === pattern.trim().toUpperCase());
+  const tooGeneric = makeRule && pattern.trim() !== '' && isGenericPattern(pattern);
 
   return (
     <Screen tabs={false}>
@@ -133,7 +135,11 @@ export default function TransactionScreen() {
             </ThemedText>
             <Field value={pattern} onChangeText={setPattern} autoCapitalize="characters" autoCorrect={false} />
             <ThemedText type="small" themeColor="textSecondary">
-              {pattern.trim() ? `${matches} másik tételre illik.` : 'Adj meg egy kulcsszót.'}
+              {tooGeneric
+                ? 'Ez a szó túl általános (pl. minden Google Pay-es vásárlásra illene). Adj meg a kereskedő nevéből egy jellemző szót, pl. „LIDL”.'
+                : pattern.trim()
+                  ? `${matches} másik tételre illik.`
+                  : 'Adj meg egy kulcsszót.'}
               {existingRule ? ` A meglévő „${existingRule.pattern}” szabályt lecseréli.` : ''}
             </ThemedText>
           </>
@@ -146,7 +152,7 @@ export default function TransactionScreen() {
           <Button title="Kész" onPress={() => router.back()} />
         </Card>
       ) : (
-        <Button title="Mentés" onPress={save} loading={busy} disabled={!changed && !makeRule} />
+        <Button title="Mentés" onPress={save} loading={busy} disabled={(!changed && !makeRule) || tooGeneric} />
       )}
 
       <Button variant="ghost" title="Tétel törlése" onPress={remove} disabled={busy} />

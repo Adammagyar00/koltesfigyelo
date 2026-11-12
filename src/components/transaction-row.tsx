@@ -7,10 +7,11 @@ import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getCategory } from '@/lib/categories';
 import { formatDate, formatMoney } from '@/lib/format';
+import { stripWalletPrefix } from '@/lib/text';
 import type { Transaction } from '@/lib/types';
 
 export function transactionTitle(t: Pick<Transaction, 'counterparty' | 'description'>): string {
-  return t.counterparty || t.description || 'Ismeretlen tétel';
+  return stripWalletPrefix(t.counterparty) || t.description || 'Ismeretlen tétel';
 }
 
 export function TransactionRow({ tx, onPress }: { tx: Transaction; onPress?: () => void }) {
