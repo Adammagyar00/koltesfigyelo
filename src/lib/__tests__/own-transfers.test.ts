@@ -26,7 +26,19 @@ const t = (p: Partial<Transaction>): Transaction => ({
 describe('matchOwnTransfer', () => {
   it('matches own name in any order and without accents', () => {
     expect(matchOwnTransfer({ counterparty: 'KOVACS ANNA', description: '' }, profile)).toBe('name');
-    expect(matchOwnTransfer({ counterparty: '', description: 'Átutalás Anna Kovács részére' }, profile)).toBe('name');
+    expect(matchOwnTransfer({ counterparty: 'Anna Kovács', description: 'Átutalás' }, profile)).toBe('name');
+  });
+
+  it('two words of a longer name are enough ("Kovács Anna Mária" = "ANNA KOVÁCS")', () => {
+    const p = { names: ['Kovács Anna Mária'], accounts: [] };
+    expect(matchOwnTransfer({ counterparty: 'ANNA KOVÁCS', description: '' }, p)).toBe('name');
+    expect(matchOwnTransfer({ counterparty: 'KOVÁCS PÉTERNÉ', description: '' }, p)).toBeNull();
+  });
+
+  it('ignores the own name in details (card holder, actual beneficiary)', () => {
+    expect(
+      matchOwnTransfer({ counterparty: 'Google Pay SMPLPAY*SHOP', description: 'KÁRTYA HASZNÁLAT Kártyabirtokos: Kovács Anna' }, profile),
+    ).toBeNull();
   });
 
   it('does not match relatives with the same surname or a single word', () => {

@@ -5,14 +5,15 @@ import type { BankId, ParsedTransaction } from '../types';
 /**
  * Bankszámlakivonat PDF-ből kinyert szövegének feldolgozása.
  *
- * A PDF-kivonatok táblázatos elrendezésűek, de a szövegkinyerés után csak sorok maradnak.
- * Feltételezések (a legtöbb magyar banki kivonatra igaz):
- *  - minden tétel egy dátummal kezdődő sorban indul (pl. "2026.11.03."), utána jöhet még egy dátum (értéknap);
- *  - a következő, dátum nélküli sorok a tétel közleményének folytatásai;
- *  - a sorban az utolsó pénzösszeg vagy maga a tétel összege, vagy – ha van egyenlegoszlop – az egyenleg,
- *    és előtte áll a tétel összege.
- * Az egyenlegoszlopot az egymást követő sorok egyenlegének változásából ismerjük fel; ilyenkor az előjelet
- * is ebből határozzuk meg, így a "Terhelés" / "Jóváírás" külön oszlopos kivonatoknál is helyes az előjel.
+ * A natív kinyerő soronként adja a szöveget, az oszlopok közé tabulátort tesz. Feltételezések
+ * (az Erste kivonatán ellenőrizve, de a legtöbb magyar banki kivonatra igaz):
+ *  - minden tétel egy dátummal kezdődő sorban indul (könyvelés dátuma, utána értéknap);
+ *  - a dátumsorban: megnevezés, (referencia), összeg, egyenleg, és zárójelben az illeték – pl. "(0,00)";
+ *  - a következő sorok részletek: vagy a megnevezés folytatása, vagy "Címke: érték" mezők
+ *    (Elfogadó, Partner számlatulajdonos, Megbízó, Közlemény, IBAN szám...);
+ *  - a "Zárolások" rész (még le nem könyvelt tételek) után nincs több könyvelt tétel.
+ * Az egyenlegoszlopot az egymást követő sorok egyenlegének változásából ismerjük fel; ha az összegnél
+ * nincs előjel, az előjelet is ebből határozzuk meg.
  */
 
 export interface PdfParseResult {
@@ -28,16 +29,39 @@ const DATE_RE = /(?:^|\s)((?:19|20)\d{2})[.\-/]\s?(\d{1,2})[.\-/]\s?(\d{1,2})\.?
 const LEADING_DATE_RE = /^\s*(?:((?:19|20)\d{2})[.\-/]\s?(\d{1,2})[.\-/]\s?(\d{1,2})\.?|(\d{1,2})[.\-/](\d{1,2})[.\-/]((?:19|20)\d{2})\.?)(?=\s|$)/;
 
 /** Összeg: opcionális előjel, ezres tagolás szóközzel vagy ponttal, opcionális tizedes vessző. */
-const MONEY_RE = /(^|[\s(])([-+−]?)\s?(\d{1,3}(?:[ .]\d{3})+|\d{1,7})(,\d{1,2})?(?:\s?(HUF|Ft|EUR|USD|GBP|CHF))?(?=$|[\s)])/g;
+const MONEY_RE = /(^|\s)([-+−]?)\s?(\d{1,3}(?:[ .]\d{3})+|\d{1,7})(,\d{1,2})?(?:\s?(HUF|Ft|EUR|USD|GBP|CHF))?(?=$|\s)/g;
 
-/** Ilyen sorok nem tételek, és lezárják az előző tétel közleményét. */
+/** Zárójeles érték (illeték, pl. "(0,00)", "(90,00)") vagy üres jelölés "( - )" – ez nem a tétel összege. */
+const PAREN_RE = /\(\s*[-+−]?\s*[\d\s.,]*\)/g;
+
+/** Ilyen sorok lezárják az előző tétel részleteit. */
 const STOP_WORDS = [
   'NYITO EGYENLEG', 'ZARO EGYENLEG', 'NYITOEGYENLEG', 'ZAROEGYENLEG', 'OSSZESEN', 'EGYENLEG', 'OLDAL',
-  'ATHOZAT', 'ATVITEL', 'KIVONAT', 'SZAMLASZAM', 'IDOSZAK', 'TERHELESEK OSSZESEN', 'JOVAIRASOK OSSZESEN',
-  'KONYVELES DATUMA', 'ERTEKNAP', 'PAGE', 'BALANCE',
+  'ATHOZAT', 'ATVITEL', 'KIVONAT', 'IDOSZAK', 'TERHELESEK OSSZESEN', 'JOVAIRASOK OSSZESEN',
+  'KONYVELES DATUMA', 'ERTEKNAP', 'PAGE', 'BALANCE', 'BANKSZAMLAKIVONAT', 'MASOLAT', 'UGYFEL NEVE',
 ];
 
+/** Ezek után a kivonatban nincs több könyvelt tétel (zárolások, összesítők). */
+const END_WORDS = ['ZARO EGYENLEG', 'ZAROEGYENLEG', 'ZAROLASOK', 'ZAROLT TETELEK', 'FUGGO TETELEK'];
+
 const CREDIT_HINTS = ['JOVAIRAS', 'BEERKEZETT', 'BEERKEZO', 'MUNKABER', 'BER ', 'KAMATJOVAIRAS', 'VISSZATERITES', 'BEFIZETES', 'NYUGDIJ'];
+
+/** Részletmezők: normalizált címke -> szerep. A többi címkés sort (kártyaszám, azonosítók...) kihagyjuk. */
+const FIELD_ROLES: Record<string, 'merchant' | 'partner' | 'payer' | 'note' | 'account'> = {
+  ELFOGADO: 'merchant',
+  'PARTNER SZAMLATULAJDONOS': 'partner',
+  'PARTNER NEVE': 'partner',
+  KEDVEZMENYEZETT: 'partner',
+  'KEDVEZMENYEZETT NEVE': 'partner',
+  MEGBIZO: 'payer',
+  'MEGBIZO NEVE': 'payer',
+  KOZLEMENY: 'note',
+  MEGJEGYZES: 'note',
+  'IBAN SZAM': 'account',
+  BANKSZAMLASZAM: 'account',
+  SZAMLASZAM: 'account',
+  'PARTNER SZAMLASZAMA': 'account',
+};
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -57,10 +81,11 @@ interface Money {
   currency?: string;
 }
 
-/** Pénzösszegek egy sorban – a dátumok, időpontok, számlaszámok és kártyaszámok kiszűrésével. */
+/** Pénzösszegek egy sorban – a dátumok, időpontok, számlaszámok, kártyaszámok és zárójeles illetékek kiszűrésével. */
 export function findMoney(line: string): Money[] {
   const cleaned = line
     .replace(/ | /g, ' ')
+    .replace(PAREN_RE, ' ')
     .replace(/\t+/g, ' | ') // oszlophatár: két szomszédos oszlop számai ne olvadjanak össze
     .replace(DATE_RE, ' ')
     .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ') // időpont
@@ -75,7 +100,6 @@ export function findMoney(line: string): Money[] {
     const cur = m[5];
     // A tagolás nélküli, tizedes és előjel nélküli 5+ jegyű szám inkább azonosító, nem összeg.
     if (!sign && !dec && !cur && /^\d{5,}$/.test(intPart)) continue;
-    // Pont mint ezreselválasztó csak akkor, ha szabályos (1.234.567); egyébként sorszám lehet.
     const value = Number(intPart.replace(/[ .]/g, '') + (dec ? `.${dec.slice(1)}` : ''));
     if (!Number.isFinite(value)) continue;
     out.push({ value: sign === '-' || sign === '−' ? -value : value, signed: Boolean(sign), currency: cur });
@@ -86,62 +110,153 @@ export function findMoney(line: string): Money[] {
 interface Block {
   date: string;
   line: number;
-  head: string;
-  rest: string[];
+  /** A dátumsor szöveges cellái (megnevezés). */
+  title: string[];
+  /** A megnevezés folytatása (címke nélküli sorok az első címkés sor előtt). */
+  extra: string[];
+  fields: { merchant?: string; partner?: string; payer?: string; note: string[]; account: string[] };
   money: Money[];
+  /** Hány nem üres sor jött eddig a dátumsor után (a megnevezés folytatása csak az első kettő lehet). */
+  seen: number;
 }
 
 function isStopLine(n: string): boolean {
   return STOP_WORDS.some((w) => n.startsWith(w) || n.includes(` ${w} `) || n === w);
 }
 
+/** "( - )" és zárójeles illeték kivétele, szóközök rendezése; a tabulátor (oszlophatár) marad. */
+function cleanLine(raw: string): string {
+  return raw
+    .replace(/ /g, ' ')
+    .replace(PAREN_RE, ' ')
+    .replace(/[ \f\v]+/g, ' ')
+    .replace(/ *\t[\t ]*/g, '\t')
+    .replace(/^\t+|\t+$/g, '')
+    .trim();
+}
+
+/** "Címke :\térték" vagy "Címke\térték" sor felbontása. Null, ha nem címkés sor. */
+function splitLabel(line: string): { label: string; value: string } | null {
+  const m = line.match(/^([^\t:]{2,60}?)\s*:\s*(?:\t\s*)?(.*)$/) ?? line.match(/^([^\t]{2,60})\t(.*)$/);
+  if (!m) return null;
+  const label = normalize(m[1]).replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!label || !/[A-Z]{2}/.test(label)) return null;
+  return { label, value: m[2].replace(/\t/g, ' ').trim() };
+}
+
+/** A dátumsor szöveges cellái: nem dátum, nem összeg, nem azonosító. */
+function titleCells(line: string): string[] {
+  return line
+    .split('\t')
+    .map((c) => c.replace(DATE_RE, ' ').trim())
+    .filter((c) => c && !/^[-+−]?[\d\s.,]+$/.test(c) && !/^\d{6,}$/.test(c));
+}
+
+/**
+ * Oldal alji jogi szöveg vagy lábléc: sorkizárt bekezdés (a szavak közé is tabulátor kerül, így egy sorban
+ * 10+ "oszlop" van – egy táblázat fejléce ennél jóval kevesebb), vagy nyomdai azonosító sor.
+ */
+function isFooterLine(line: string): boolean {
+  return (line.match(/\t/g)?.length ?? 0) >= 9 || /\.afp\b/i.test(line);
+}
+
 function collectBlocks(pages: string[]): { blocks: Block[]; lineCount: number } {
   const blocks: Block[] = [];
   let current: Block | null = null;
   let lineNo = 0;
-  for (const page of pages) {
+  let skipNextDate = false;
+  let ended = false;
+  const close = () => {
+    if (current) blocks.push(current);
+    current = null;
+  };
+  pages.forEach((page, pageIndex) => {
+    // A második oldaltól az oldal eleje ismétlődő fejléc (név, számlaszám, oszlopfejlécek): a tétel
+    // részletei csak utána folytatódnak, ezért a fejléc végéig (vagy az első dátumsorig) mindent kihagyunk.
+    let inHeader = pageIndex > 0;
+    let inFooter = false;
     for (const raw of page.split(/\r?\n/)) {
       lineNo++;
-      // A tabulátor oszlophatár (a natív kinyerő teszi be), azt megtartjuk.
-      const line = raw.replace(/ /g, ' ').replace(/[ \f\v]+/g, ' ').replace(/ *\t[\t ]*/g, '\t').trim();
+      if (ended || inFooter) continue;
+      const line = cleanLine(raw);
       if (!line) continue;
+      const n = normalize(line.replace(/\t/g, ' '));
+      if (END_WORDS.some((w) => n.startsWith(w))) {
+        close();
+        ended = true;
+        continue;
+      }
       const lead = line.match(LEADING_DATE_RE);
       const date = lead ? toISO(lead) : null;
+      if (inHeader && !date) {
+        if (n.startsWith('DATUMA')) inHeader = false; // az oszlopfejléc második sora ("dátuma (PTI+KPTI)")
+        continue;
+      }
+      inHeader = false;
+      if (!date && isFooterLine(line)) {
+        // A jogi szöveg/lábléc az oldal végéig tart; a tétel a következő oldalon folytatódhat.
+        inFooter = !/\.afp\b/i.test(line) || inFooter;
+        continue;
+      }
       if (date) {
-        if (current) blocks.push(current);
-        const money = findMoney(line);
-        current = { date, line: lineNo, head: line, rest: [], money };
+        close();
+        // A "Nyitó egyenleg" utáni dátumsor maga a nyitó egyenleg, nem tétel.
+        if (skipNextDate) {
+          skipNextDate = false;
+          continue;
+        }
+        current = {
+          date,
+          line: lineNo,
+          title: titleCells(line),
+          extra: [],
+          fields: { note: [], account: [] },
+          money: findMoney(line),
+          seen: 0,
+        };
+        continue;
+      }
+      if (isStopLine(n)) {
+        close();
+        if (n.startsWith('NYITO EGYENLEG') || n.startsWith('NYITOEGYENLEG')) {
+          // Ha a nyitó egyenleg összege ugyanebben a sorban van, nincs külön dátumsor.
+          skipNextDate = findMoney(line).length === 0;
+        }
         continue;
       }
       if (!current) continue;
-      const n = normalize(line.replace(/\t/g, ' '));
-      if (isStopLine(n)) {
-        blocks.push(current);
-        current = null;
-        continue;
-      }
+      current.seen++;
       // Ha a dátumsorban nem volt összeg, a következő sorból vesszük.
       if (current.money.length === 0) current.money = findMoney(line);
-      if (current.rest.length < 4) current.rest.push(line);
+      const lf = splitLabel(line);
+      const role = lf ? FIELD_ROLES[lf.label] : undefined;
+      if (lf && role) {
+        if (role === 'note' || role === 'account') {
+          if (lf.value) current.fields[role].push(lf.value);
+        } else if (!current.fields[role] && lf.value) {
+          current.fields[role] = lf.value;
+        }
+      } else if (!lf && !line.includes('\t') && current.seen <= 2 && !hasLabels(current)) {
+        // Címke nélküli sor a részletek előtt: a megnevezés folytatása.
+        current.extra.push(line);
+      }
     }
-    // Oldaltörésnél a tétel nem folytatódik (a következő oldal fejléccel indul).
-    if (current) {
-      blocks.push(current);
-      current = null;
-    }
-  }
+  });
+  close();
   return { blocks, lineCount: lineNo };
 }
 
-function description(b: Block): string {
-  const strip = (s: string) =>
-    s
-      .replace(/\t+/g, ' ')
-      .replace(DATE_RE, ' ')
-      .replace(/(^|\s)[-+−]?\s?(\d{1,3}(?:[ .]\d{3})+|\d{1,7})(,\d{1,2})?(\s?(HUF|Ft|EUR|USD|GBP|CHF))?(?=$|\s)/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  return [strip(b.head), ...b.rest.map(strip)].filter(Boolean).join(' ').trim();
+function hasLabels(b: Block): boolean {
+  const f = b.fields;
+  return Boolean(f.merchant || f.partner || f.payer || f.note.length || f.account.length);
+}
+
+function stripNumbers(s: string): string {
+  return s
+    .replace(DATE_RE, ' ')
+    .replace(/(^|\s)[-+−]?\s?(\d{1,3}(?:[ .]\d{3})+|\d{1,7})(,\d{1,2})?(\s?(HUF|Ft|EUR|USD|GBP|CHF))?(?=$|\s)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 const near = (a: number, b: number) => Math.abs(a - b) < 0.015;
@@ -180,7 +295,8 @@ export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency
 
   const fit = balanceFit(usable);
   const withBalance = fit.ratio >= 0.6;
-  const anySigned = usable.some((b) => b.money.some((m) => m.signed));
+  // Ha a kivonat a terheléseket mínuszjellel írja, az előjel nélküli összeg jóváírás.
+  const anySigned = usable.some((b) => b.money.some((m) => m.signed && m.value < 0));
 
   const transactions: ParsedTransaction[] = [];
   const occurrences = new Map<string, number>();
@@ -189,39 +305,42 @@ export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency
   usable.forEach((b, i) => {
     let amount: number;
     let currency = defaultCurrency;
-    if (withBalance && b.money.length >= 2) {
-      const a = b.money[b.money.length - 2];
-      currency = a.currency && a.currency !== 'Ft' ? a.currency : currency;
-      amount = Math.abs(a.value);
+    const a =
+      withBalance && b.money.length >= 2
+        ? b.money[b.money.length - 2]
+        : ([...b.money].reverse().find((m) => m.signed) ?? b.money[b.money.length - 1]);
+    currency = a.currency && a.currency !== 'Ft' ? a.currency : currency;
+
+    if (a.signed || (anySigned && a.value > 0)) {
+      amount = a.value;
+    } else if (withBalance && b.money.length >= 2) {
       // Előjel az egyenleg változásából: a tétel utáni egyenleg mínusz az előző (korábbi) tétel utáni egyenleg.
       // Időrendben a korábbi tétel felette van, fordított sorrendben (legújabb elöl) alatta.
       const prev = fit.order === 'forward' ? usable[i - 1] : usable[i + 1];
-      if (a.signed) amount = a.value;
-      else if (prev && prev.money.length >= 2) {
+      if (prev && prev.money.length >= 2) {
         const diff = b.money[b.money.length - 1].value - prev.money[prev.money.length - 1].value;
-        amount = diff < 0 ? -amount : amount;
+        amount = diff < 0 ? -Math.abs(a.value) : Math.abs(a.value);
       } else {
-        amount = -amount;
+        amount = -Math.abs(a.value);
         guessedSigns++;
       }
     } else {
-      // Egyenlegoszlop nélkül: az előjeles szám a tétel összege (az egyenleget jellemzően előjel nélkül írják),
-      // ennek hiányában a sor utolsó összege.
-      const a = [...b.money].reverse().find((m) => m.signed) ?? b.money[b.money.length - 1];
-      currency = a.currency && a.currency !== 'Ft' ? a.currency : currency;
-      amount = a.value;
-      if (!anySigned) {
-        const text = normalize(`${b.head} ${b.rest.join(' ')}`);
-        amount = CREDIT_HINTS.some((h) => text.includes(h.trim())) ? Math.abs(amount) : -Math.abs(amount);
-        guessedSigns++;
-      }
+      const text = normalize([...b.title, ...b.extra].join(' '));
+      amount = CREDIT_HINTS.some((h) => text.includes(h.trim())) ? Math.abs(a.value) : -Math.abs(a.value);
+      guessedSigns++;
     }
     if (amount === 0) {
       skipped.push({ row: b.line, reason: 'Nulla összeg' });
       return;
     }
-    const desc = description(b);
-    const base = `${b.date}|${amount}|${currency}|${normalize(desc)}`;
+
+    const f = b.fields;
+    // Partner: kártyás vásárlásnál az elfogadóhely, utalásnál a partner, bejövő tételnél a megbízó.
+    const counterparty = (f.merchant ?? f.partner ?? (amount > 0 ? f.payer : undefined) ?? f.payer ?? '').trim();
+    const title = stripNumbers([...b.title, ...b.extra].join(' '));
+    const description = [title, ...f.note, ...f.account.map((x) => `Számla: ${x}`)].filter(Boolean).join(' | ');
+
+    const base = `${b.date}|${amount}|${currency}|${normalize(counterparty)}|${normalize(title)}`;
     const n = (occurrences.get(base) ?? 0) + 1;
     occurrences.set(base, n);
     transactions.push({
@@ -229,8 +348,8 @@ export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency
       date: b.date,
       amount: Math.round(amount * 100) / 100,
       currency,
-      counterparty: '',
-      description: desc,
+      counterparty,
+      description,
       bank,
     });
   });
@@ -241,6 +360,6 @@ export function parsePdfStatement(pages: string[], bank: BankId, defaultCurrency
     );
   }
   // Időrend: a legrégebbi elöl, hogy az előnézet egységes legyen.
-  transactions.sort((a, b) => a.date.localeCompare(b.date));
+  transactions.sort((x, y) => x.date.localeCompare(y.date));
   return { transactions, skipped, warnings, lineCount };
 }

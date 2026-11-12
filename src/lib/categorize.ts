@@ -37,16 +37,19 @@ export function categorize(
   const own = matchOwnTransfer(tx, profile);
   if (own) return { categoryId: TRANSFER_CATEGORY, categorySource: 'rule', ruleId: `own:${own}` };
   const text = matchText(tx);
+  // Kártyás visszatérítés (pl. "KÁRTYA HASZNÁLAT - JÓV"): a kereskedő kategóriájának költését csökkenti,
+  // nem bevétel.
+  const cardRefund = tx.amount > 0 && /\bKARTYA HASZNALAT\b|\bVISSZATERITES\b|\bREFUND\b/.test(text);
   for (const rule of sortedRules) {
     if (!containsToken(text, rule.pattern)) continue;
     const kind = getCategory(rule.categoryId).kind;
-    // Egy kiadási kulcsszó ne sorolja kiadásnak a bejövő pénzt (pl. visszatérítés a Lidltől),
-    // kivéve ha a felhasználó maga mondta így.
-    if (rule.source === 'default' && kind === 'expense' && tx.amount > 0) continue;
+    // Egy kiadási kulcsszó ne sorolja kiadásnak a bejövő pénzt (pl. egy átutalást a Lidltől),
+    // kivéve ha a felhasználó maga mondta így, vagy ha kártyás visszatérítésről van szó.
+    if (rule.source === 'default' && kind === 'expense' && tx.amount > 0 && !cardRefund) continue;
     if (rule.source === 'default' && kind === 'income' && tx.amount < 0) continue;
     return { categoryId: rule.categoryId, categorySource: 'rule', ruleId: rule.id };
   }
-  return { categoryId: tx.amount > 0 ? FALLBACK_INCOME : FALLBACK_EXPENSE, categorySource: 'default' };
+  return { categoryId: tx.amount > 0 && !cardRefund ? FALLBACK_INCOME : FALLBACK_EXPENSE, categorySource: 'default' };
 }
 
 /**

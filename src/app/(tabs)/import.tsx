@@ -1,7 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ScrollView, Share, StyleSheet, View } from 'react-native';
+import { ScrollView, Share, StyleSheet, Switch, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { TransactionRow } from '@/components/transaction-row';
@@ -40,7 +40,7 @@ async function readPickedFile(asset: DocumentPicker.DocumentPickerAsset): Promis
 
 export default function ImportScreen() {
   const theme = useTheme();
-  const { preview, importTransactions } = useData();
+  const { preview, importTransactions, overlapping } = useData();
   const [bank, setBank] = useState<BankId>('erste');
   const [step, setStep] = useState<Step>({ kind: 'pick' });
   const [busy, setBusy] = useState(false);
@@ -125,11 +125,11 @@ export default function ImportScreen() {
     });
   };
 
-  const confirm = async (result: ParseSuccess) => {
+  const confirm = async (result: ParseSuccess, replaceIds?: string[]) => {
     setBusy(true);
     setError(null);
     try {
-      const outcome = await importTransactions(result.transactions);
+      const outcome = await importTransactions(result.transactions, replaceIds);
       setStep({ kind: 'done', ...outcome });
     } catch (e) {
       setError(`Mentés sikertelen: ${(e as Error).message}`);
@@ -167,8 +167,8 @@ export default function ImportScreen() {
           </Card>
           <Button title="Kivonat kiválasztása (PDF vagy CSV)" onPress={pick} loading={busy} />
           <ThemedText type="small" themeColor="textSecondary">
-            Ugyanazt az időszakot nyugodtan importálhatod újra: a már meglévő tételeket felismerjük és kihagyjuk, a
-            kézi besorolásaid megmaradnak.
+            Ugyanazt az időszakot nyugodtan importálhatod újra: a már meglévő tételeket felismerjük, és a korábbi
+            importból ott maradt eltérő tételeket le is cserélheted.
           </ThemedText>
         </>
       ) : null}
@@ -190,8 +190,9 @@ export default function ImportScreen() {
           pdfText={step.pdfText}
           selectedBank={bank}
           rows={preview(step.result.transactions)}
+          overlap={overlapping(step.result.transactions)}
           busy={busy}
-          onConfirm={() => confirm(step.result)}
+          onConfirm={(replaceIds) => confirm(step.result, replaceIds)}
           onCancel={() => setStep({ kind: 'pick' })}
         />
       ) : null}
@@ -215,7 +216,7 @@ export default function ImportScreen() {
       {step.kind === 'done' ? (
         <Card style={{ alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.four }}>
           <ThemedText style={{ fontSize: 40 }}>✅</ThemedText>
-          <ThemedText style={{ fontSize: 20, fontWeight: '700' }}>{step.added} új tétel importálva</ThemedText>
+          <ThemedText style={{ fontSize: 20, fontWeight: '700' }}>{step.added} tétel importálva</ThemedText>
           {step.duplicates > 0 ? (
             <ThemedText themeColor="textSecondary">{step.duplicates} tétel már korábban is megvolt, azokat kihagytuk.</ThemedText>
           ) : null}
@@ -234,6 +235,7 @@ function PreviewStep({
   pdfText,
   selectedBank,
   rows,
+  overlap,
   busy,
   onConfirm,
   onCancel,
@@ -244,13 +246,17 @@ function PreviewStep({
   pdfText?: string;
   selectedBank: BankId;
   rows: ReturnType<ReturnType<typeof useData>['preview']>;
+  /** Ugyanerre az időszakra korábban importált, de ebben a fájlban nem szereplő tételek. */
+  overlap: ReturnType<ReturnType<typeof useData>['overlapping']>;
   busy: boolean;
-  onConfirm: () => void;
+  onConfirm: (replaceIds?: string[]) => void;
   onCancel: () => void;
 }) {
   const theme = useTheme();
   const [showSkipped, setShowSkipped] = useState(false);
+  const [replace, setReplace] = useState(true);
   const fresh = rows.filter((r) => !r.duplicate);
+  const willReplace = replace && overlap.length > 0;
   const dates = result.transactions.map((t) => t.date).sort();
   const currencies = [...new Set(result.transactions.map((t) => t.currency))];
 
@@ -341,7 +347,32 @@ function PreviewStep({
         ))}
       </Card>
 
-      <Button title={fresh.length > 0 ? `${fresh.length} tétel importálása` : 'Nincs új tétel'} onPress={onConfirm} loading={busy} disabled={fresh.length === 0} />
+      {overlap.length > 0 ? (
+        <Card style={{ borderColor: theme.warning, borderWidth: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
+            <ThemedText style={{ flex: 1, fontWeight: '600' }}>
+              {overlap.length} korábban importált tétel cseréje erre az időszakra
+            </ThemedText>
+            <Switch value={replace} onValueChange={setReplace} trackColor={{ true: theme.tint }} />
+          </View>
+          <ThemedText type="small" themeColor="textSecondary">
+            Ugyanerre a bankra és időszakra már vannak tételeid, amik ebben a fájlban nem így szerepelnek (pl. egy
+            korábbi, hibás beolvasásból). Csere esetén ezek törlődnek, és a fájl tételei kerülnek a helyükre. A
+            szabályaid, kereteid és beállításaid megmaradnak.
+          </ThemedText>
+        </Card>
+      ) : null}
+
+      <Button
+        title={
+          fresh.length > 0 || willReplace
+            ? `${willReplace ? `${overlap.length} régi cseréje, ` : ''}${fresh.length} tétel importálása`
+            : 'Nincs új tétel'
+        }
+        onPress={() => onConfirm(willReplace ? overlap.map((t) => t.id) : undefined)}
+        loading={busy}
+        disabled={fresh.length === 0 && !willReplace}
+      />
       <Button variant="secondary" title="Mégse" onPress={onCancel} />
       {pdfText ? (
         <Card>

@@ -32,12 +32,16 @@ function accountKeys(accounts: string[]): string[] {
   return [...keys];
 }
 
-/** A név minden szava szerepel-e a szövegben (sorrendtől függetlenül: "Kovács Anna" = "ANNA KOVACS"). */
+/**
+ * A partner neve a felhasználó neve-e: a megadott név legalább két szava szerepel benne, sorrendtől
+ * függetlenül ("Kovács Anna Mária" = "ANNA KOVÁCS"). Egyetlen közös szó (pl. csak a vezetéknév, egy
+ * családtagnál) nem elég.
+ */
 function nameMatches(text: string, name: string): boolean {
-  const tokens = normalize(name).split(' ').filter((t) => t.length >= 2);
-  if (tokens.length < 2) return false; // egyetlen szó (pl. csak vezetéknév) túl sok mindenre illene
+  const tokens = [...new Set(normalize(name).split(' ').filter((t) => t.length >= 2))];
+  if (tokens.length < 2) return false;
   const words = new Set(text.split(/[^A-Z0-9]+/));
-  return tokens.every((t) => words.has(t));
+  return tokens.filter((t) => words.has(t)).length >= 2;
 }
 
 export type OwnMatch = 'name' | 'account';
@@ -46,8 +50,10 @@ export function matchOwnTransfer(
   tx: Pick<ParsedTransaction, 'counterparty' | 'description'>,
   profile: OwnProfile,
 ): OwnMatch | null {
-  const text = normalize(`${tx.counterparty} ${tx.description}`);
-  if (profile.names.some((n) => nameMatches(text, n))) return 'name';
+  // A nevet csak a partnernél nézzük: a részletekben a saját neved sokszor szerepel
+  // (kártyabirtokos, "tényleges kedvezményezett"), ezek nem jelentenek saját átvezetést.
+  const party = normalize(tx.counterparty);
+  if (party && profile.names.some((n) => nameMatches(party, n))) return 'name';
   const keys = accountKeys(profile.accounts);
   if (keys.length) {
     // Számlaszámok a szövegben: a számjegyek tagolás nélkül, de csak a hosszú számsorozatokat nézzük.

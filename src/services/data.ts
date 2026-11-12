@@ -157,6 +157,23 @@ export function deleteTransaction(id: string): Promise<void> {
   });
 }
 
+/** Több tétel törlése egyszerre (pl. egy időszak régi tételeinek cseréjekor). */
+export function deleteTransactions(ids: string[]): Promise<void> {
+  return serial(async () => {
+    if (ids.length === 0) return;
+    const s = await load();
+    const months = new Set<string>();
+    for (const id of ids) {
+      const t = s.transactions.get(id);
+      if (!t) continue;
+      s.transactions.delete(id);
+      months.add(t.date.slice(0, 7));
+    }
+    await persistMonths(s, months);
+    emit(s, 'transactions');
+  });
+}
+
 export function saveRule(rule: Rule): Promise<void> {
   return serial(async () => {
     const s = await load();

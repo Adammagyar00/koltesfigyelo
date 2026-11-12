@@ -18,6 +18,7 @@ export const CATEGORIES: Category[] = [
   { id: 'egyeb', name: 'Egyéb', icon: '📦', color: '#6E7681', kind: 'expense' },
   { id: 'bevetel', name: 'Bevétel', icon: '💰', color: '#1F8F4E', kind: 'income' },
   { id: 'atvezetes', name: 'Átvezetés (saját)', icon: '🔄', color: '#9AA0A6', kind: 'transfer' },
+  { id: 'befektetes', name: 'Befektetés, megtakarítás', icon: '📈', color: '#4F8A8B', kind: 'transfer' },
 ];
 
 export const FALLBACK_EXPENSE = 'egyeb';
@@ -67,7 +68,7 @@ const DEFAULT_KEYWORDS: Record<string, string[]> = {
   ],
   vasarlas: [
     'EMAG', 'ALZA', 'MEDIA MARKT', 'MEDIAMARKT', 'EXTREME DIGITAL', 'EURONICS', 'AMAZON', 'ALIEXPRESS',
-    'TEMU', 'SHEIN', 'ZARA', 'H&M', 'RESERVED', 'DECATHLON', 'DEICHMANN', 'CCC', 'ABOUT YOU',
+    'TEMU', 'SHEIN', 'ZARA', 'H&M', 'HENNES', 'HM HENNES', 'RESERVED', 'DECATHLON', 'DEICHMANN', 'CCC', 'ABOUT YOU',
     'ZALANDO', 'LIBRI', 'BOOKLINE', 'VATERA', 'JOFOGAS', 'ARUKERESO', 'NOTINO', 'DOUGLAS',
   ],
   egeszseg: ['PATIKA', 'GYOGYSZERTAR', 'BENU', 'MEDICOVER', 'DOC.HU', 'FOGORVOS', 'OPTIKA', 'SZEMUVEG', 'LABOR'],
@@ -80,10 +81,17 @@ const DEFAULT_KEYWORDS: Record<string, string[]> = {
   dijak: [
     'SZAMLAVEZETESI DIJ', 'SZAMLAVEZETESI', 'KARTYADIJ', 'KARTYA EVES DIJ', 'TRANZAKCIOS ILLETEK',
     'JUTALEK', 'KEZELESI DIJ', 'ZARLATI DIJ', 'SMS DIJ', 'NETBANK DIJ', 'KAMAT', 'HITELKAMAT',
+    'TRANZAKCIOS DIJ', 'LEKERDEZES DIJ', 'DIJ',
   ],
   bevetel: ['MUNKABER', 'BER', 'FIZETES JOVAIRAS', 'NYUGDIJ', 'CSALADI POTLEK', 'CSOK', 'SALARY'],
+  befektetes: [
+    'BYBIT', 'BINANCE', 'COINBASE', 'KRAKEN', 'BITSTAMP', 'BITPANDA', 'LIGHTYEAR', 'TRADING 212', 'TRADING212',
+    'ETORO', 'INTERACTIVE BROKERS', 'IBKR', 'DEGIRO', 'XTB', 'FREEDOM24', 'SCALABLE CAPITAL', 'ALLAMPAPIR',
+    'MAP+', 'PMAP', 'BEFEKTETES', 'ONKENTES NYUGDIJPENZTAR', 'NYUGDIJPENZTAR', 'EGESZSEGPENZTAR',
+  ],
   atvezetes: [
-    'SAJAT SZAMLA', 'SAJAT SZAMLAK KOZOTT', 'ATVEZETES', 'CONVERTED', 'TOPPED UP', 'TOP UP',
+    'SAJAT SZAMLA', 'SAJAT SZAMLARA', 'SAJAT SZAMLAROL', 'SAJAT SZAMLAK KOZOTT', 'ATVEZETES',
+    'DEVIZAKONVERZIO', 'KONVERZIO', 'CONVERTED', 'TOPPED UP', 'TOP UP',
     'WISE', 'TRANSFERWISE', 'REVOLUT', 'MEGTAKARITAS', 'BETETLEKOTES', 'LEKOTES',
   ],
 };

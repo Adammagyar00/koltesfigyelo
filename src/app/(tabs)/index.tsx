@@ -35,6 +35,9 @@ export default function OverviewScreen() {
       budgets: budgetStatuses(budgets, summary, today).filter((b) => b.state !== 'ok'),
       tips: savingTips(transactions, month, today, budgets).slice(0, 2),
       transfers: transactions.filter((t) => monthOf(t.date) === month && t.categoryId === 'atvezetes').length,
+      invested: transactions
+        .filter((t) => monthOf(t.date) === month && t.categoryId === 'befektetes' && t.currency === 'HUF')
+        .reduce((s, t) => s - t.amount, 0),
       uncategorized: transactions.filter(
         (t) => monthOf(t.date) === month && t.amount < 0 && t.categorySource === 'default',
       ).length,
@@ -98,6 +101,13 @@ export default function OverviewScreen() {
             color={summary.income - summary.spent >= 0 ? theme.success : theme.danger}
           />
         </View>
+        {data.invested !== 0 ? (
+          <Pressable onPress={() => router.push({ pathname: '/transactions', params: { month, category: 'befektetes' } })}>
+            <ThemedText type="small" themeColor="textSecondary">
+              📈 Befektetés, megtakarítás: {formatMoney(data.invested)} – ez sincs benne a kiadásban ›
+            </ThemedText>
+          </Pressable>
+        ) : null}
         {data.transfers > 0 ? (
           <Pressable onPress={() => router.push({ pathname: '/transactions', params: { month, category: 'atvezetes' } })}>
             <ThemedText type="small" themeColor="textSecondary">

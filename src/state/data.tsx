@@ -23,7 +23,13 @@ interface DataState {
   rules: Rule[];
   /** Előnézethez: mi lenne a besorolás importáláskor. */
   preview(parsed: ParsedTransaction[]): { tx: Transaction; duplicate: boolean }[];
-  importTransactions(parsed: ParsedTransaction[]): Promise<ImportOutcome>;
+  /**
+   * Importálás. Ha `replaceIds` meg van adva, ezeket a (korábban importált) tételeket előbb törli –
+   * így egy kivonat újraimportálása lecseréli ugyanannak az időszaknak a régi tételeit.
+   */
+  importTransactions(parsed: ParsedTransaction[], replaceIds?: string[]): Promise<ImportOutcome>;
+  /** Ugyanannál a banknál, ugyanebben az időszakban lévő, de az új importban nem szereplő tételek. */
+  overlapping(parsed: ParsedTransaction[]): Transaction[];
   /**
    * Kézi átsorolás. Ha `rulePattern` meg van adva, szabályt is ment belőle, és az összes
    * nem kézzel besorolt tételt újrasorolja. Visszaadja, hány további tétel változott.
@@ -103,13 +109,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
     rules,
     preview,
 
-    async importTransactions(parsed) {
+    overlapping(parsed) {
+      if (parsed.length === 0) return [];
+      const ids = new Set(parsed.map((p) => p.id));
+      const banks = new Set(parsed.map((p) => p.bank));
+      const dates = parsed.map((p) => p.date).sort();
+      const from = dates[0];
+      const to = dates[dates.length - 1];
+      return transactions.filter((t) => banks.has(t.bank) && t.date >= from && t.date <= to && !ids.has(t.id));
+    },
+
+    async importTransactions(parsed, replaceIds) {
+      const replaced = new Set(replaceIds ?? []);
+      if (replaced.size) await store.deleteTransactions([...replaced]);
       const rows = preview(parsed);
       // A már meglévő tételeket nem írjuk felül, hogy a kézi besorolások megmaradjanak.
       const fresh = rows.filter((r) => !r.duplicate).map((r) => r.tx);
       await store.saveTransactions(fresh);
       // Az új tételekkel együtt keressük a bankok közötti átutalás-párokat (pl. Erste → Wise).
-      await store.updateCategories(recategorize([...transactions, ...fresh], rules, profile));
+      await store.updateCategories(recategorize([...transactions.filter((t) => !replaced.has(t.id)), ...fresh], rules, profile));
       return { added: fresh.length, duplicates: rows.length - fresh.length };
     },
 
