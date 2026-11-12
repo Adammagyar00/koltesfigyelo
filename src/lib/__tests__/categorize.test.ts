@@ -120,3 +120,9 @@ describe('payment wallet prefixes', () => {
     expect(stripWalletPrefix('UBER *TRIP HELP Amsterdam')).toBe('UBER *TRIP HELP Amsterdam');
   });
 });
+
+describe('user-reported merchants', () => {
+  it('Fusion (Erste: "Google Pay Fusion Befekte") is groceries, not investment', () => {
+    expect(categorize(tx('Google Pay Fusion Befekte'), rules).categoryId).toBe('elelmiszer');
+  });
+});

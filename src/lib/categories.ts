@@ -38,7 +38,7 @@ export function getCategory(id: string): Category {
 const DEFAULT_KEYWORDS: Record<string, string[]> = {
   elelmiszer: [
     'LIDL', 'ALDI', 'SPAR', 'INTERSPAR', 'TESCO', 'PENNY', 'PENNY MARKET', 'AUCHAN', 'CBA', 'COOP',
-    'PRIMA', 'METRO', 'REAL', 'MATCH', 'HUSBOLT', 'PEKSEG', 'ZOLDSEGES', 'PIAC', 'SPAR EXPRESSZ',
+    'PRIMA', 'METRO', 'REAL', 'MATCH', 'HUSBOLT', 'PEKSEG', 'ZOLDSEGES', 'PIAC', 'SPAR EXPRESSZ', 'FUSION',
   ],
   etterem: [
     'WOLT', 'FOODORA', 'NETPINCER', 'MCDONALDS', "MCDONALD'S", 'BURGER KING', 'KFC', 'SUBWAY',
