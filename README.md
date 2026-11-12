@@ -44,6 +44,22 @@ Kipróbáláshoz a `sample-data/erste-minta.csv` kitalált mintakivonat használ
 
 Minden adat **csak a telefonon** van (AsyncStorage), nincs fiók és nincs szerver. A tételek havonta külön kulcsban tárolódnak (`src/services/data.ts`). Az app törlésével az adatok is törlődnek; a kivonatok bármikor újraimportálhatók. Felhős szinkron később hozzáadható ugyanebbe a rétegbe.
 
+## Android APK építése és kiadása
+
+A felhős fejlesztőkörnyezet indító szkriptje telepíti a szükséges eszközöket (Java 17, Android SDK `/opt/android-sdk` alá, NDK, Maven-tükör).
+
+```bash
+# 1. Verzió emelése az app.json-ban: expo.version (pl. 1.0.3) és expo.android.versionCode (+1)
+# 2. Natív projekt generálása és build (csak arm64, a mai telefonokra)
+CI=1 npx expo prebuild -p android --no-install
+echo "sdk.dir=/opt/android-sdk" > android/local.properties
+(cd android && ANDROID_HOME=/opt/android-sdk NODE_ENV=production ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a)
+# 3. Kiadás: a `releases` ágra kerül, az app innen frissít ("Frissítés" gomb)
+scripts/release-android.sh android/app/build/outputs/apk/release/app-release.apk "Mi változott"
+```
+
+Az APK a gyári debug kulccsal van aláírva; minden verziót ugyanazzal kell aláírni, különben a telefon nem engedi frissítésként telepíteni.
+
 ## Ellenőrzések
 
 ```bash
