@@ -27,7 +27,7 @@ const BANKS: { id: BankId; name: string; hint: string }[] = [
 type Step =
   | { kind: 'pick' }
   | { kind: 'mapping'; text: string; fileName: string; result: ParseNeedsMapping }
-  | { kind: 'preview'; fileName: string; result: ParseSuccess; warnings?: string[] }
+  | { kind: 'preview'; fileName: string; result: ParseSuccess; warnings?: string[]; pdfText?: string }
   | { kind: 'pdf-failed'; fileName: string; text: string }
   | { kind: 'done'; added: number; duplicates: number };
 
@@ -113,6 +113,7 @@ export default function ImportScreen() {
       kind: 'preview',
       fileName: asset.name,
       warnings: r.warnings,
+      pdfText: text,
       result: {
         ok: true,
         bank,
@@ -186,6 +187,7 @@ export default function ImportScreen() {
           fileName={step.fileName}
           result={step.result}
           warnings={step.warnings}
+          pdfText={step.pdfText}
           selectedBank={bank}
           rows={preview(step.result.transactions)}
           busy={busy}
@@ -229,6 +231,7 @@ function PreviewStep({
   fileName,
   result,
   warnings,
+  pdfText,
   selectedBank,
   rows,
   busy,
@@ -238,6 +241,7 @@ function PreviewStep({
   fileName: string;
   result: ParseSuccess;
   warnings?: string[];
+  pdfText?: string;
   selectedBank: BankId;
   rows: ReturnType<ReturnType<typeof useData>['preview']>;
   busy: boolean;
@@ -339,6 +343,19 @@ function PreviewStep({
 
       <Button title={fresh.length > 0 ? `${fresh.length} tétel importálása` : 'Nincs új tétel'} onPress={onConfirm} loading={busy} disabled={fresh.length === 0} />
       <Button variant="secondary" title="Mégse" onPress={onCancel} />
+      {pdfText ? (
+        <Card>
+          <ThemedText type="small" themeColor="textSecondary">
+            Hibásak a tételek? Oszd meg a PDF-ből kiolvasott szöveget, és a beolvasás hozzáigazítható a bankod
+            formátumához. Küldés előtt nézd át: benne lehet a neved és a számlaszámod is.
+          </ThemedText>
+          <Button
+            variant="secondary"
+            title="Kiolvasott szöveg megosztása"
+            onPress={() => Share.share({ title: fileName, message: pdfText.slice(0, 20000) })}
+          />
+        </Card>
+      ) : null}
     </>
   );
 }
