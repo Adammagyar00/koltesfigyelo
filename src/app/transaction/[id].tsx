@@ -83,7 +83,11 @@ export default function TransactionScreen() {
         <ThemedText type="small" themeColor="textSecondary">
           {tx.categorySource === 'user'
             ? 'Kézzel besorolva'
-            : rule
+            : tx.ruleId === 'own:pair'
+              ? 'Saját átvezetés: ugyanennyi ment ki az egyik bankodból és jött be a másikba'
+              : tx.ruleId?.startsWith('own:')
+                ? 'Saját átvezetés: a neved vagy a számlaszámod szerepel benne'
+                : rule
               ? `Szabály alapján: „${rule.pattern}”`
               : 'Nem találtunk illő szabályt'}
         </ThemedText>

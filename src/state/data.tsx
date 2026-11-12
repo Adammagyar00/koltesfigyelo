@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 import { defaultRules } from '@/lib/categories';
 import { categorize, recategorize, sortRules } from '@/lib/categorize';
+import { cleanProfile, EMPTY_PROFILE, type OwnProfile } from '@/lib/own-transfers';
 import { normalize } from '@/lib/text';
 import type { Budget, ParsedTransaction, Rule, Transaction } from '@/lib/types';
 import * as store from '@/services/data';
@@ -33,6 +34,10 @@ interface DataState {
   removeTransaction(id: string): Promise<void>;
   /** Minden adat törlése a telefonról. */
   clearAll(): Promise<void>;
+  /** Saját név és számlaszámok – ezekből ismerjük fel a saját számlák közötti átvezetéseket. */
+  profile: OwnProfile;
+  /** Elmenti a profilt, és újrasorol mindent. Visszaadja, hány tétel került át "Átvezetés"-be. */
+  setProfile(profile: OwnProfile): Promise<number>;
 }
 
 const DataContext = createContext<DataState | null>(null);
@@ -43,6 +48,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [loaded, setLoaded] = useState({ tx: false, rules: false, budgets: false });
   const [error, setError] = useState<string | null>(null);
+  const [profile, setProfileState] = useState<OwnProfile>(EMPTY_PROFILE);
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
   useEffect(() => {
     const onError = (e: Error) => setError(e.message);
@@ -61,7 +68,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setLoaded((l) => ({ ...l, budgets: true }));
       }, onError),
     ];
-    return () => unsubs.forEach((u) => u());
+    let alive = true;
+    store
+      .loadProfile()
+      .then((p) => alive && setProfileState(p))
+      .catch(onError)
+      .finally(() => alive && setProfileLoaded(true));
+    return () => {
+      alive = false;
+      unsubs.forEach((u) => u());
+    };
   }, []);
 
   const rules = useMemo(() => sortRules([...userRules, ...defaultRules()]), [userRules]);
@@ -71,15 +87,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
     (parsed: ParsedTransaction[]) => {
       const now = Date.now();
       return parsed.map((p) => ({
-        tx: { ...p, ...categorize(p, rules), importedAt: now } as Transaction,
+        tx: { ...p, ...categorize(p, rules, profile), importedAt: now } as Transaction,
         duplicate: existingIds.has(p.id),
       }));
     },
-    [rules, existingIds],
+    [rules, existingIds, profile],
   );
 
   const value: DataState = {
-    loading: !(loaded.tx && loaded.rules && loaded.budgets),
+    loading: !(loaded.tx && loaded.rules && loaded.budgets && profileLoaded),
     error,
     transactions,
     userRules,
@@ -92,6 +108,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // A már meglévő tételeket nem írjuk felül, hogy a kézi besorolások megmaradjanak.
       const fresh = rows.filter((r) => !r.duplicate).map((r) => r.tx);
       await store.saveTransactions(fresh);
+      // Az új tételekkel együtt keressük a bankok közötti átutalás-párokat (pl. Erste → Wise).
+      await store.updateCategories(recategorize([...transactions, ...fresh], rules, profile));
       return { added: fresh.length, duplicates: rows.length - fresh.length };
     },
 
@@ -111,14 +129,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (old) await store.deleteRule(old.id);
       await store.saveRule(rule);
       const others = transactions.filter((t) => t.id !== tx.id);
-      const changed = recategorize(others, [...userRules.filter((r) => r.id !== old?.id), rule, ...defaultRules()]);
+      const changed = recategorize(others, [...userRules.filter((r) => r.id !== old?.id), rule, ...defaultRules()], profile);
       await store.updateCategories(changed);
       return changed.length;
     },
 
     async removeRule(id) {
       await store.deleteRule(id);
-      const changed = recategorize(transactions, [...userRules.filter((r) => r.id !== id), ...defaultRules()]);
+      const changed = recategorize(transactions, [...userRules.filter((r) => r.id !== id), ...defaultRules()], profile);
       await store.updateCategories(changed);
       return changed.length;
     },
@@ -132,7 +150,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
       await store.deleteTransaction(id);
     },
 
-    clearAll: store.clearAll,
+    async clearAll() {
+      await store.clearAll();
+      setProfileState(EMPTY_PROFILE);
+    },
+
+    profile,
+
+    async setProfile(next) {
+      const p = cleanProfile(next);
+      await store.saveProfile(p);
+      setProfileState(p);
+      const changed = recategorize(transactions, rules, p);
+      await store.updateCategories(changed);
+      return changed.filter((t) => t.categoryId === 'atvezetes').length;
+    },
   };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

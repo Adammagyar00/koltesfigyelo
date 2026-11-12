@@ -34,6 +34,7 @@ export default function OverviewScreen() {
       trend: monthlyTrend(transactions, month, 6),
       budgets: budgetStatuses(budgets, summary, today).filter((b) => b.state !== 'ok'),
       tips: savingTips(transactions, month, today, budgets).slice(0, 2),
+      transfers: transactions.filter((t) => monthOf(t.date) === month && t.categoryId === 'atvezetes').length,
       uncategorized: transactions.filter(
         (t) => monthOf(t.date) === month && t.amount < 0 && t.categorySource === 'default',
       ).length,
@@ -97,6 +98,13 @@ export default function OverviewScreen() {
             color={summary.income - summary.spent >= 0 ? theme.success : theme.danger}
           />
         </View>
+        {data.transfers > 0 ? (
+          <Pressable onPress={() => router.push({ pathname: '/transactions', params: { month, category: 'atvezetes' } })}>
+            <ThemedText type="small" themeColor="textSecondary">
+              🔄 {data.transfers} saját számlák közötti átvezetés nincs benne az összegekben ›
+            </ThemedText>
+          </Pressable>
+        ) : null}
         {summary.otherCurrencyCount > 0 ? (
           <ThemedText type="small" themeColor="textSecondary">
             {summary.otherCurrencyCount} nem forintos tétel (pl. Wise EUR) nincs benne az összegekben.

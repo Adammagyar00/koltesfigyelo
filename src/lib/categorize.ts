@@ -1,4 +1,5 @@
 import { FALLBACK_EXPENSE, FALLBACK_INCOME, getCategory } from './categories';
+import { EMPTY_PROFILE, findTransferPairs, matchOwnTransfer, TRANSFER_CATEGORY, type OwnProfile } from './own-transfers';
 import { containsToken, merchantKey, normalize } from './text';
 import type { CategorySource, ParsedTransaction, Rule, Transaction } from './types';
 
@@ -24,8 +25,17 @@ export function matchText(tx: Pick<ParsedTransaction, 'counterparty' | 'descript
   return normalize(`${tx.counterparty} ${tx.description}`);
 }
 
-/** Egy tétel besorolása a (már rendezett) szabályok alapján. */
-export function categorize(tx: ParsedTransaction, sortedRules: Rule[]): CategoryAssignment {
+/**
+ * Egy tétel besorolása. Elsőként a saját számlák közötti átvezetést nézzük (saját név vagy
+ * számlaszám a tételben), utána a (már rendezett) szabályokat.
+ */
+export function categorize(
+  tx: ParsedTransaction,
+  sortedRules: Rule[],
+  profile: OwnProfile = EMPTY_PROFILE,
+): CategoryAssignment {
+  const own = matchOwnTransfer(tx, profile);
+  if (own) return { categoryId: TRANSFER_CATEGORY, categorySource: 'rule', ruleId: `own:${own}` };
   const text = matchText(tx);
   for (const rule of sortedRules) {
     if (!containsToken(text, rule.pattern)) continue;
@@ -41,14 +51,31 @@ export function categorize(tx: ParsedTransaction, sortedRules: Rule[]): Category
 
 /**
  * Új szabályok után az összes tétel újrabesorolása. A kézzel beállított tételekhez nem nyúlunk.
+ * A két bank közötti átutalás-párokat (pl. Erste → Wise) is átvezetésnek jelöli.
  * Csak a ténylegesen megváltozott tételeket adja vissza (ezeket kell menteni).
  */
-export function recategorize(transactions: Transaction[], rules: Rule[]): Transaction[] {
+export function recategorize(
+  transactions: Transaction[],
+  rules: Rule[],
+  profile: OwnProfile = EMPTY_PROFILE,
+): Transaction[] {
   const sorted = sortRules(rules);
+  const assigned = new Map<string, CategoryAssignment>();
+  const next = transactions.map((tx) => {
+    if (tx.categorySource === 'user') return tx;
+    const a = categorize(tx, sorted, profile);
+    assigned.set(tx.id, a);
+    return { ...tx, ...a };
+  });
+  for (const id of findTransferPairs(next)) {
+    if (!assigned.get(id)?.ruleId?.startsWith('own:')) {
+      assigned.set(id, { categoryId: TRANSFER_CATEGORY, categorySource: 'rule', ruleId: 'own:pair' });
+    }
+  }
   const changed: Transaction[] = [];
   for (const tx of transactions) {
-    if (tx.categorySource === 'user') continue;
-    const a = categorize(tx, sorted);
+    const a = assigned.get(tx.id);
+    if (!a) continue;
     // A hiányzó ruleId lehet null vagy undefined (régebbi mentésekből) – ezeket azonosnak vesszük.
     const ruleChanged = (a.ruleId ?? null) !== (tx.ruleId ?? null);
     if (a.categoryId !== tx.categoryId || ruleChanged || a.categorySource !== tx.categorySource) {

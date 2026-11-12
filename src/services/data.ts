@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { cleanProfile, EMPTY_PROFILE, type OwnProfile } from '@/lib/own-transfers';
 import type { Budget, Rule, Transaction } from '@/lib/types';
 
 /**
@@ -10,6 +11,7 @@ import type { Budget, Rule, Transaction } from '@/lib/types';
  *                        legyen túl nagy (Androidon egy elem mérete korlátozott).
  *   kf:v1:rules        – a felhasználó saját szabályai
  *   kf:v1:budgets      – havi keretek
+ *   kf:v1:profile      – saját név és számlaszámok (a saját átvezetések felismeréséhez)
  *
  * Az adatokat induláskor egyszer betöltjük a memóriába; minden írás a memóriát frissíti,
  * majd a megváltozott kulcsokat menti, és értesíti a feliratkozókat.
@@ -19,6 +21,7 @@ const PREFIX = 'kf:v1:';
 const TX_PREFIX = `${PREFIX}tx:`;
 const RULES_KEY = `${PREFIX}rules`;
 const BUDGETS_KEY = `${PREFIX}budgets`;
+const PROFILE_KEY = `${PREFIX}profile`;
 
 type CollectionName = 'transactions' | 'rules' | 'budgets';
 
@@ -201,4 +204,18 @@ export function clearAll(): Promise<void> {
     s.budgets = [];
     (['transactions', 'rules', 'budgets'] as const).forEach((n) => emit(s, n));
   });
+}
+
+export async function loadProfile(): Promise<OwnProfile> {
+  const raw = await AsyncStorage.getItem(PROFILE_KEY);
+  if (!raw) return EMPTY_PROFILE;
+  try {
+    return cleanProfile({ ...EMPTY_PROFILE, ...JSON.parse(raw) });
+  } catch {
+    return EMPTY_PROFILE;
+  }
+}
+
+export async function saveProfile(profile: OwnProfile): Promise<void> {
+  await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(cleanProfile(profile)));
 }
