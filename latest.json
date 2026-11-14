@@ -1,0 +1,6 @@
+{
+  "version": "1.2.1",
+  "notes": "Adatvédelem: az importált kivonat másolata beolvasás után törlődik, és a biztonsági mentés jelszóval titkosítható.",
+  "apk": "Koltesfigyelo-1.2.1.apk",
+  "size": 41008055
+}
