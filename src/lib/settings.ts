@@ -20,6 +20,12 @@ export interface AppSettings {
   pending: PendingItem[];
   /** A felhasználó BKK-havibérletének ára (Ft) a közlekedési tipphez. */
   passPrice: number;
+  /** Értesítés az előfizetések megújulása előtt. */
+  subscriptionAlerts: boolean;
+  /** Hány nappal a megújulás előtt szóljon (0 = aznap). */
+  alertDaysBefore: number;
+  /** Elrejtett ("nem előfizetés") tételek kulcsai. */
+  ignoredSubscriptions: string[];
 }
 
 /** Becsült alapértékek – a Beállításokban átírhatók a pontos árfolyamra. */
@@ -31,6 +37,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customCategories: [],
   pending: [],
   passPrice: 950,
+  subscriptionAlerts: false,
+  alertDaysBefore: 1,
+  ignoredSubscriptions: [],
 };
 
 export function mergeSettings(raw: Partial<AppSettings> | null | undefined): AppSettings {
@@ -41,5 +50,11 @@ export function mergeSettings(raw: Partial<AppSettings> | null | undefined): App
     customCategories: Array.isArray(raw?.customCategories) ? raw.customCategories : [],
     pending: Array.isArray(raw?.pending) ? raw.pending : [],
     passPrice: typeof raw?.passPrice === 'number' && raw.passPrice > 0 ? raw.passPrice : DEFAULT_SETTINGS.passPrice,
+    subscriptionAlerts: raw?.subscriptionAlerts === true,
+    alertDaysBefore:
+      typeof raw?.alertDaysBefore === 'number' && raw.alertDaysBefore >= 0 && raw.alertDaysBefore <= 7
+        ? raw.alertDaysBefore
+        : DEFAULT_SETTINGS.alertDaysBefore,
+    ignoredSubscriptions: Array.isArray(raw?.ignoredSubscriptions) ? raw.ignoredSubscriptions : [],
   };
 }

@@ -29,3 +29,16 @@ export function todayISO(now = new Date()): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 }
+
+/** "2026-12-05" -> "december 5." */
+export function formatDayMonth(date: string): string {
+  const [, m, d] = date.split('-').map(Number);
+  return `${MONTHS[m - 1]} ${d}.`;
+}
+
+/** 0 -> "ma", 1 -> "holnap", 5 -> "5 nap múlva" */
+export function relativeDays(days: number): string {
+  if (days <= 0) return 'ma';
+  if (days === 1) return 'holnap';
+  return `${days} nap múlva`;
+}

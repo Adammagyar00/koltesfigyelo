@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
-import { onReminderTapped } from '@/services/reminder';
+import { onNotificationTapped } from '@/services/reminder';
 import { DataProvider } from '@/state/data';
 
 SplashScreen.preventAutoHideAsync();
@@ -17,8 +17,8 @@ export default function RootLayout() {
     SplashScreen.hideAsync();
   }, []);
 
-  // A havi emlékeztetőre koppintva az Import fül nyílik meg.
-  useEffect(() => onReminderTapped(() => router.navigate('/import')), []);
+  // Értesítésre koppintva: havi emlékeztető -> Import fül, előfizetés-értesítő -> Előfizetések.
+  useEffect(() => onNotificationTapped((screen) => router.navigate(screen === 'import' ? '/import' : '/subscriptions')), []);
 
   return (
     <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -34,6 +34,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="transaction/[id]" options={{ presentation: 'modal', headerShown: true, title: 'Tétel' }} />
           <Stack.Screen name="settings" options={{ headerShown: true, title: 'Beállítások' }} />
+          <Stack.Screen name="subscriptions" options={{ headerShown: true, title: 'Előfizetések' }} />
         </Stack>
       </DataProvider>
     </ThemeProvider>

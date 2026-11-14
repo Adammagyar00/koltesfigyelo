@@ -3,11 +3,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { defaultRules, FALLBACK_EXPENSE, newCustomCategory, setCustomCategories } from '@/lib/categories';
 import { categorize, recategorize, sortRules } from '@/lib/categorize';
 import { toBaseCurrency } from '@/lib/currency';
+import { todayISO } from '@/lib/format';
 import { cleanProfile, EMPTY_PROFILE, type OwnProfile } from '@/lib/own-transfers';
 import { DEFAULT_SETTINGS, type AppSettings, type PendingItem } from '@/lib/settings';
+import { detectSubscriptions, type Subscription } from '@/lib/subscriptions';
 import { isGenericPattern, normalize } from '@/lib/text';
 import type { BankId, Budget, Category, ParsedTransaction, Rule, Transaction } from '@/lib/types';
 import * as store from '@/services/data';
+import { requestNotificationPermission, syncSubscriptionAlerts } from '@/services/reminder';
 
 interface ImportOutcome {
   added: number;
@@ -62,6 +65,12 @@ interface DataState {
   exportBackup(): Promise<string>;
   /** Mentés visszatöltése (minden jelenlegi adat cseréje). Visszaadja a visszatöltött tételek számát. */
   restoreBackup(json: string): Promise<number>;
+  /** Felismert előfizetések, a legközelebbi megújulás szerint rendezve (az elrejtettek nélkül). */
+  subscriptions: Subscription[];
+  /** Előfizetés-értesítők be/ki. Hamis, ha bekapcsoláskor nem kaptunk engedélyt. */
+  setSubscriptionAlerts(on: boolean, daysBefore?: number): Promise<boolean>;
+  hideSubscription(key: string): Promise<void>;
+  unhideSubscription(key: string): Promise<void>;
 }
 
 const DataContext = createContext<DataState | null>(null);
@@ -132,6 +141,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (changed.length) store.updateCategories(changed).catch((e: Error) => setError(e.message));
   }, [ready, transactions, rules, profile]);
   const existingIds = useMemo(() => new Set(transactions.map((t) => t.id)), [transactions]);
+
+  const today = todayISO();
+  const subscriptions = useMemo(
+    () => detectSubscriptions(transactions, today, settings.ignoredSubscriptions),
+    [transactions, today, settings.ignoredSubscriptions],
+  );
+  // Az előfizetés-értesítők újraütemezése, ha változik a lista vagy a beállítás (és minden indításkor).
+  const alertsKey = subscriptions.map((s) => `${s.key}@${s.nextDate}${s.stale ? 'x' : ''}`).join(',');
+  useEffect(() => {
+    if (!ready) return;
+    syncSubscriptionAlerts(subscriptions, settings.subscriptionAlerts, settings.alertDaysBefore).catch(() => {
+      // Az értesítések ütemezése nem kritikus: hiba esetén a lista az appban így is látszik.
+    });
+    // A lista kulcsa (alertsKey) elég: ha az nem változott, nem kell újraütemezni.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, alertsKey, settings.subscriptionAlerts, settings.alertDaysBefore]);
 
   const preview = useCallback(
     (parsed: ParsedTransaction[]) => {
@@ -287,6 +312,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setProfileState(data.profile);
       applySettings(data.settings);
       return data.transactions.length;
+    },
+
+    subscriptions,
+
+    async setSubscriptionAlerts(on, daysBefore) {
+      if (on && !(await requestNotificationPermission())) return false;
+      await saveSettings({ ...settings, subscriptionAlerts: on, alertDaysBefore: daysBefore ?? settings.alertDaysBefore });
+      return true;
+    },
+
+    async hideSubscription(key) {
+      if (settings.ignoredSubscriptions.includes(key)) return;
+      await saveSettings({ ...settings, ignoredSubscriptions: [...settings.ignoredSubscriptions, key] });
+    },
+
+    async unhideSubscription(key) {
+      await saveSettings({ ...settings, ignoredSubscriptions: settings.ignoredSubscriptions.filter((k) => k !== key) });
     },
   };
 

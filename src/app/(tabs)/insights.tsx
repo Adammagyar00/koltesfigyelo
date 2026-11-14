@@ -3,27 +3,26 @@ import { useMemo } from 'react';
 import { Pressable, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Button, Card, CategoryBadge, Empty, Loading, Screen, SectionTitle, Title } from '@/components/ui';
+import { Button, Card, Empty, Loading, Screen, SectionTitle, Title } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { formatDate, formatMoney, formatMonth, todayISO } from '@/lib/format';
+import { formatDayMonth, formatMoney, formatMonth, todayISO } from '@/lib/format';
 import type { InvestmentLine, InvestmentMonth } from '@/lib/insights';
-import { detectRecurring, investmentBreakdown, investmentTrend, monthOf, savingTips } from '@/lib/insights';
+import { investmentBreakdown, investmentTrend, monthOf, savingTips } from '@/lib/insights';
 import { useData } from '@/state/data';
 
 export default function InsightsScreen() {
   const theme = useTheme();
   // Az összesítésekhez a forintra számolt tételek kellenek.
-  const { baseTransactions: transactions, budgets, loading, settings } = useData();
+  const { baseTransactions: transactions, budgets, loading, settings, subscriptions } = useData();
   const today = todayISO();
   const month = transactions[0] && monthOf(transactions[0].date) < monthOf(today) ? monthOf(transactions[0].date) : monthOf(today);
 
-  const { tips, recurring, investments, investmentLines } = useMemo(
+  const { tips, investments, investmentLines } = useMemo(
     () => ({
       tips: savingTips(transactions, month, today, budgets, 'HUF', settings.passPrice),
       investments: investmentTrend(transactions, month, 6),
       investmentLines: investmentBreakdown(transactions, month),
-      recurring: detectRecurring(transactions, today),
     }),
     [transactions, budgets, month, today, settings.passPrice],
   );
@@ -31,8 +30,11 @@ export default function InsightsScreen() {
   if (loading) return <Loading />;
 
   const totalSaving = tips.reduce((s, t) => s + (t.monthlySaving ?? 0), 0);
-  const recurringHuf = recurring.filter((r) => r.currency === 'HUF');
-  const recurringMonthly = recurringHuf.reduce((s, r) => s + r.averageAmount, 0);
+  const activeSubs = subscriptions.filter((s) => !s.stale && s.type === 'subscription');
+  const subsMonthly = activeSubs.reduce(
+    (sum, s) => sum + (s.currency === 'HUF' ? s.amount : s.amount * (settings.rates[s.currency] ?? 0)),
+    0,
+  );
 
   return (
     <Screen>
@@ -86,48 +88,39 @@ export default function InsightsScreen() {
 
           <InvestmentSection months={investments} lines={investmentLines} />
 
-          <SectionTitle>Rendszeres terhelések</SectionTitle>
-          {recurring.length === 0 ? (
+          <SectionTitle>Előfizetések</SectionTitle>
+          <Pressable onPress={() => router.push('/subscriptions')}>
             <Card>
-              <ThemedText themeColor="textSecondary">
-                Nem találtunk havonta ismétlődő terhelést. Ehhez legalább 3 hónapnyi adat kell.
+              {activeSubs.length === 0 ? (
+                <ThemedText themeColor="textSecondary">
+                  Még nem találtunk előfizetést. Az „Előfizetések” kategóriájú és a havonta ismétlődő terheléseket
+                  ismerjük fel.
+                </ThemedText>
+              ) : (
+                <>
+                  <ThemedText style={{ fontWeight: '700' }}>
+                    {activeSubs.length} előfizetés · havi {formatMoney(subsMonthly)}, évente {formatMoney(subsMonthly * 12)}
+                  </ThemedText>
+                  {activeSubs.slice(0, 4).map((s) => (
+                    <View key={s.key} style={{ flexDirection: 'row', gap: Spacing.two }}>
+                      <ThemedText style={{ flex: 1 }} numberOfLines={1}>
+                        {s.name}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {formatDayMonth(s.nextDate)}
+                      </ThemedText>
+                      <ThemedText style={{ fontWeight: '700', minWidth: 80, textAlign: 'right' }}>
+                        {formatMoney(s.amount, s.currency)}
+                      </ThemedText>
+                    </View>
+                  ))}
+                </>
+              )}
+              <ThemedText type="small" style={{ color: theme.tint, fontWeight: '600' }}>
+                Megújulási dátumok és értesítések ›
               </ThemedText>
             </Card>
-          ) : (
-            <Card>
-              {recurringHuf.length > 0 ? (
-                <ThemedText type="small" themeColor="textSecondary">
-                  Havonta {formatMoney(recurringMonthly)}, évente {formatMoney(recurringMonthly * 12)}
-                </ThemedText>
-              ) : null}
-              {recurring.map((r) => (
-                <Pressable
-                  key={`${r.merchant}-${r.currency}`}
-                  onPress={() => router.push({ pathname: '/transactions', params: { category: r.categoryId } })}
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: Spacing.three,
-                    paddingVertical: Spacing.two,
-                    opacity: pressed ? 0.6 : 1,
-                  })}>
-                  <CategoryBadge categoryId={r.categoryId} size={32} />
-                  <View style={{ flex: 1 }}>
-                    <ThemedText style={{ fontWeight: '600' }}>{r.merchant}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {r.months} hónapja · utoljára {formatDate(r.lastDate)}
-                    </ThemedText>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <ThemedText style={{ fontWeight: '700' }}>{formatMoney(r.averageAmount, r.currency)}</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {formatMoney(r.yearlyCost, r.currency)}/év
-                    </ThemedText>
-                  </View>
-                </Pressable>
-              ))}
-            </Card>
-          )}
+          </Pressable>
         </>
       )}
     </Screen>

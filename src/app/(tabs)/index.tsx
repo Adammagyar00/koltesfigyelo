@@ -9,14 +9,15 @@ import { Button, Card, CategoryBadge, Empty, Loading, ProgressBar, Screen, Secti
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { getCategory } from '@/lib/categories';
-import { formatMoney, formatMonth, todayISO } from '@/lib/format';
+import { formatDayMonth, formatMoney, formatMonth, relativeDays, todayISO } from '@/lib/format';
 import { budgetStatuses, dailySpending, monthlyTrend, monthOf, savingTips, shiftMonth, summarizeMonth } from '@/lib/insights';
+import type { Subscription } from '@/lib/subscriptions';
 import { useData } from '@/state/data';
 
 export default function OverviewScreen() {
   const theme = useTheme();
   // Az összesítésekhez a forintra számolt tételek kellenek.
-  const { baseTransactions: transactions, budgets, loading, error, settings } = useData();
+  const { baseTransactions: transactions, budgets, loading, error, settings, subscriptions } = useData();
   const today = todayISO();
   const currentMonth = monthOf(today);
   const latestMonth = transactions[0] ? monthOf(transactions[0].date) : currentMonth;
@@ -127,6 +128,8 @@ export default function OverviewScreen() {
           </ThemedText>
         ) : null}
       </Card>
+
+      <UpcomingRenewals subs={subscriptions} />
 
       {pending.length > 0 ? (
         <Card>
@@ -277,6 +280,51 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
       </ThemedText>
       <ThemedText style={{ fontSize: 18, fontWeight: '700', color }}>{value}</ThemedText>
     </View>
+  );
+}
+
+/** A következő 7 napban megújuló előfizetések; ha nincs ilyen, csak egy rövid link az Előfizetésekre. */
+function UpcomingRenewals({ subs }: { subs: Subscription[] }) {
+  const theme = useTheme();
+  const active = subs.filter((s) => !s.stale);
+  if (active.length === 0) return null;
+  const soon = active.filter((s) => s.daysUntil <= 7);
+  const open = () => router.push('/subscriptions');
+  if (soon.length === 0) {
+    return (
+      <Pressable onPress={open}>
+        <Card style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
+          <ThemedText style={{ fontSize: 20 }}>🔁</ThemedText>
+          <ThemedText style={{ flex: 1 }}>
+            {active.length} előfizetés · a következő: {active[0].name}, {formatDayMonth(active[0].nextDate)}
+          </ThemedText>
+          <ThemedText themeColor="textSecondary">›</ThemedText>
+        </Card>
+      </Pressable>
+    );
+  }
+  return (
+    <Pressable onPress={open}>
+      <Card>
+        <ThemedText style={{ fontWeight: '700' }}>🔔 Hamarosan megújul</ThemedText>
+        {soon.map((s) => (
+          <View key={s.key} style={{ gap: 2 }}>
+            <View style={styles.row}>
+              <ThemedText style={{ flex: 1, fontWeight: '600' }} numberOfLines={1}>
+                {s.name}
+              </ThemedText>
+              <ThemedText style={{ fontWeight: '700' }}>{formatMoney(s.amount, s.currency)}</ThemedText>
+            </View>
+            <ThemedText type="small" style={{ color: s.daysUntil <= 1 ? theme.warning : theme.textSecondary, fontWeight: '600' }}>
+              {formatDayMonth(s.nextDate)} · {relativeDays(s.daysUntil)}
+            </ThemedText>
+          </View>
+        ))}
+        <ThemedText type="small" themeColor="textSecondary">
+          Összes előfizetés és értesítések ›
+        </ThemedText>
+      </Card>
+    </Pressable>
   );
 }
 
