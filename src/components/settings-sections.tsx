@@ -9,11 +9,13 @@ import { Button, Card, Chip, Field, SectionTitle } from '@/components/ui';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { CUSTOM_ICONS } from '@/lib/categories';
+import { MIN_PASSWORD_LENGTH } from '@/lib/backup-crypto';
 import { parseAmount } from '@/lib/csv/values';
 import { base64ToBytes, decodeUtf8Strict } from '@/lib/encoding';
 import { todayISO } from '@/lib/format';
 import { DEFAULT_RATES } from '@/lib/settings';
 import { disableMonthlyReminder, enableMonthlyReminder, REMINDER_DAY, REMINDER_HOUR, remindersSupported } from '@/services/reminder';
+import { cleanupPickedFiles } from '@/services/temp-files';
 import { useData } from '@/state/data';
 
 function confirmAsync(title: string, message: string, ok: string): Promise<boolean> {
@@ -32,12 +34,23 @@ export function BackupSection() {
   const { exportBackup, restoreBackup, transactions } = useData();
   const [busy, setBusy] = useState<'export' | 'import' | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [password, setPassword] = useState('');
+  // Jelszóval védett mentés, amihez még nem adtak meg (jó) jelszót.
+  const [locked, setLocked] = useState<string | null>(null);
+
+  // A titkosítás/visszafejtés pár másodpercig is tarthat; előtte hagyjuk kirajzolni a töltésjelzőt.
+  const nextFrame = () => new Promise((r) => setTimeout(r, 50));
 
   const save = async () => {
+    if (password && password.length < MIN_PASSWORD_LENGTH) {
+      setMessage({ ok: false, text: `A jelszó legalább ${MIN_PASSWORD_LENGTH} karakter legyen (vagy hagyd üresen).` });
+      return;
+    }
     setBusy('export');
     setMessage(null);
     try {
-      const json = await exportBackup();
+      await nextFrame();
+      const json = await exportBackup(password || undefined);
       const name = `koltesfigyelo-mentes-${todayISO()}.json`;
       if (Platform.OS === 'web') {
         const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
@@ -53,7 +66,12 @@ export function BackupSection() {
         await file.write(json);
         await Sharing.shareAsync(file.uri, { mimeType: 'application/json', dialogTitle: 'Mentés helye (pl. Google Drive)' });
       }
-      setMessage({ ok: true, text: `Elkészült a mentés (${transactions.length} tétel). Tedd biztos helyre, pl. Google Drive-ra.` });
+      setMessage({
+        ok: true,
+        text: password
+          ? `Elkészült a titkosított mentés (${transactions.length} tétel). Jegyezd meg a jelszót: nélküle nem lehet visszaállítani.`
+          : `Elkészült a mentés (${transactions.length} tétel). Tedd biztos helyre, pl. Google Drive-ra.`,
+      });
     } catch (e) {
       setMessage({ ok: false, text: `A mentés nem sikerült: ${(e as Error).message}` });
     } finally {
@@ -71,20 +89,48 @@ export function BackupSection() {
       'A telefonon lévő összes jelenlegi adat (tételek, szabályok, keretek, beállítások) lecserélődik a mentés tartalmára.',
       'Visszaállítás',
     );
-    if (!ok) return;
-    setBusy('import');
+    if (!ok) {
+      cleanupPickedFiles();
+      return;
+    }
+    let text: string | null;
     try {
       const bytes = asset.base64
         ? base64ToBytes(asset.base64)
         : asset.file
           ? new Uint8Array(await asset.file.arrayBuffer())
           : new Uint8Array(await (await fetch(asset.uri)).arrayBuffer());
-      const text = decodeUtf8Strict(bytes);
-      if (text === null) throw new Error('A fájl nem olvasható.');
-      const n = await restoreBackup(text);
+      text = decodeUtf8Strict(bytes);
+    } finally {
+      // A kiválasztott fájl gyorsítótárba tett másolatát beolvasás után töröljük.
+      cleanupPickedFiles();
+    }
+    if (text === null) {
+      setMessage({ ok: false, text: 'A fájl nem olvasható.' });
+      return;
+    }
+    await runRestore(text);
+  };
+
+  const runRestore = async (text: string) => {
+    setBusy('import');
+    setMessage(null);
+    try {
+      await nextFrame();
+      const n = await restoreBackup(text, password || undefined);
+      setLocked(null);
       setMessage({ ok: true, text: `Visszaállítva: ${n} tétel és minden beállítás.` });
     } catch (e) {
-      setMessage({ ok: false, text: (e as Error).message });
+      const err = e as Error & { code?: string };
+      if (err.code === 'PASSWORD_REQUIRED' || /Hibás jelszó/.test(err.message)) {
+        setLocked(text);
+        setMessage({
+          ok: false,
+          text: err.code === 'PASSWORD_REQUIRED' ? 'Ez a mentés jelszóval védett. Írd be a jelszót, és koppints a Feloldás gombra.' : err.message,
+        });
+      } else {
+        setMessage({ ok: false, text: err.message });
+      }
     } finally {
       setBusy(null);
     }
@@ -98,9 +144,26 @@ export function BackupSection() {
           Az adataid csak ezen a telefonon vannak. Készíts róluk mentést (pl. Google Drive-ra), hogy telefoncsere
           vagy az app törlése után is vissza tudd tölteni őket.
         </ThemedText>
+        <Field
+          label="Jelszó a mentéshez (nem kötelező)"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder={`Legalább ${MIN_PASSWORD_LENGTH} karakter`}
+        />
+        <ThemedText type="small" themeColor="textSecondary">
+          Jelszóval a mentésfájl titkosítva készül (AES-256), így aki hozzáfér a Drive-odhoz, sem tudja elolvasni. A
+          jelszót sehol nem tároljuk: ha elfelejted, a mentés nem állítható vissza. A titkosítás és a feloldás pár
+          másodpercig tarthat.
+        </ThemedText>
         {message ? <ThemedText style={{ color: message.ok ? theme.success : theme.danger }}>{message.text}</ThemedText> : null}
-        <Button title="Mentés fájlba" onPress={save} loading={busy === 'export'} disabled={busy !== null} />
-        <Button variant="secondary" title="Visszaállítás fájlból" onPress={restore} loading={busy === 'import'} disabled={busy !== null} />
+        {locked ? (
+          <Button title="Feloldás és visszaállítás" onPress={() => runRestore(locked)} loading={busy === 'import'} disabled={!password || busy !== null} />
+        ) : null}
+        <Button title={password ? 'Titkosított mentés fájlba' : 'Mentés fájlba'} onPress={save} loading={busy === 'export'} disabled={busy !== null} />
+        <Button variant="secondary" title="Visszaállítás fájlból" onPress={restore} loading={busy === 'import' && !locked} disabled={busy !== null} />
       </Card>
     </>
   );

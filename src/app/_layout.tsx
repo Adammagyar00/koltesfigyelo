@@ -5,6 +5,7 @@ import { useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 import { onNotificationTapped } from '@/services/reminder';
+import { cleanupExportedBackups, cleanupPickedFiles } from '@/services/temp-files';
 import { DataProvider } from '@/state/data';
 
 SplashScreen.preventAutoHideAsync();
@@ -15,6 +16,9 @@ export default function RootLayout() {
 
   useEffect(() => {
     SplashScreen.hideAsync();
+    // Korábbi importok és mentések gyorsítótárban maradt másolatainak törlése.
+    cleanupPickedFiles();
+    cleanupExportedBackups();
   }, []);
 
   // Értesítésre koppintva: havi emlékeztető -> Import fül, előfizetés-értesítő -> Előfizetések.

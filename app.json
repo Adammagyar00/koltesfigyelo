@@ -2,7 +2,7 @@
   "expo": {
     "name": "Költésfigyelő",
     "slug": "koltesfigyelo",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "koltesfigyelo",
@@ -20,7 +20,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "hu.koltesfigyelo.app",
-      "versionCode": 11,
+      "versionCode": 12,
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ]

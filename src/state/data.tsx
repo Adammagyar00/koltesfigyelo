@@ -2,6 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { defaultRules, FALLBACK_EXPENSE, newCustomCategory, setCustomCategories } from '@/lib/categories';
 import { categorize, recategorize, sortRules } from '@/lib/categorize';
+import { getRandomBytes } from 'expo-crypto';
+
+import { decryptBackup, encryptBackup, isEncryptedBackup } from '@/lib/backup-crypto';
 import { toBaseCurrency } from '@/lib/currency';
 import { todayISO } from '@/lib/format';
 import { cleanProfile, EMPTY_PROFILE, type OwnProfile } from '@/lib/own-transfers';
@@ -61,10 +64,13 @@ interface DataState {
   addCategory(name: string, icon: string): Promise<Category>;
   /** Saját kategória törlése: a tételei újra besorolódnak, a rá mutató szabályok és keret törlődik. */
   removeCategory(id: string): Promise<void>;
-  /** A teljes adatbázis JSON-mentése. */
-  exportBackup(): Promise<string>;
-  /** Mentés visszatöltése (minden jelenlegi adat cseréje). Visszaadja a visszatöltött tételek számát. */
-  restoreBackup(json: string): Promise<number>;
+  /** A teljes adatbázis JSON-mentése; jelszóval titkosítva, ha `password` meg van adva. */
+  exportBackup(password?: string): Promise<string>;
+  /**
+   * Mentés visszatöltése (minden jelenlegi adat cseréje). Visszaadja a visszatöltött tételek számát.
+   * Titkosított mentésnél jelszó kell; ha hiányzik, `code: 'PASSWORD_REQUIRED'` hibával dob.
+   */
+  restoreBackup(json: string, password?: string): Promise<number>;
   /** Felismert előfizetések, a legközelebbi megújulás szerint rendezve (az elrejtettek nélkül). */
   subscriptions: Subscription[];
   /** Előfizetés-értesítők be/ki. Hamis, ha bekapcsoláskor nem kaptunk engedélyt. */
@@ -296,16 +302,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
       await store.updateCategories([...changed, ...orphans.filter((o) => !changedIds.has(o.id))]);
     },
 
-    async exportBackup() {
-      return JSON.stringify(await store.exportAll());
+    async exportBackup(password) {
+      const json = JSON.stringify(await store.exportAll());
+      if (!password) return json;
+      return JSON.stringify(encryptBackup(json, password, getRandomBytes));
     },
 
-    async restoreBackup(json) {
+    async restoreBackup(json, password) {
       let parsed: unknown;
       try {
         parsed = JSON.parse(json);
       } catch {
         throw new Error('A fájl nem olvasható (nem JSON).');
+      }
+      if (isEncryptedBackup(parsed)) {
+        if (!password) {
+          throw Object.assign(new Error('Ez a mentés jelszóval védett.'), { code: 'PASSWORD_REQUIRED' });
+        }
+        parsed = JSON.parse(decryptBackup(parsed, password));
       }
       const data = store.validateBackup(parsed);
       await store.restoreAll(data);

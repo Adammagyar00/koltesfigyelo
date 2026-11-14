@@ -14,6 +14,7 @@ import { base64ToBytes, decodeBankFile } from '@/lib/encoding';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { BankId } from '@/lib/types';
 import { parsePdfStatement, type PdfPendingItem } from '@/lib/pdf/statement-pdf';
+import { cleanupPickedFiles } from '@/services/temp-files';
 import { useData } from '@/state/data';
 
 import { extractPdfText, isPdfSupported } from '../../../modules/pdf-text';
@@ -79,6 +80,9 @@ export default function ImportScreen() {
     } catch (e) {
       setError(`Nem sikerült beolvasni a fájlt: ${(e as Error).message}`);
     } finally {
+      // A kivonat gyorsítótárba tett másolatát beolvasás után töröljük: a tételek már a memóriában vannak,
+      // az eredeti fájlra nincs szükség, és így nem marad a kivonat az app tárhelyén.
+      cleanupPickedFiles();
       setBusy(false);
     }
   };
